@@ -1,0 +1,16 @@
+# Swiss Alpine Hiking Condition Forecaster - Python dependencies
+# All packages are free and pip-installable.
+
+streamlit>=1.32.0
+requests>=2.31.0
+pandas>=2.1.0
+numpy>=1.26.0
+scikit-learn>=1.4.0
+plotly>=5.18.0
+folium>=0.15.0
+streamlit-folium>=0.17.0
+
+# Dev-only (uncomment locally if needed):
+# pytest>=8.0.0
+# black>=24.0.0
+# ruff>=0.3.0

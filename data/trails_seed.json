@@ -1,0 +1,202 @@
+[
+  {
+    "name": "Säntis via Schwägalp",
+    "canton": "AR/AI",
+    "difficulty": "T3",
+    "min_alt_m": 1352,
+    "max_alt_m": 2502,
+    "lat": 47.2493,
+    "lon": 9.3432,
+    "length_km": 7.8
+  },
+  {
+    "name": "Churfirsten — Chäserrugg",
+    "canton": "SG",
+    "difficulty": "T3",
+    "min_alt_m": 1340,
+    "max_alt_m": 2262,
+    "lat": 47.1583,
+    "lon": 9.3153,
+    "length_km": 9.2
+  },
+  {
+    "name": "Hoher Kasten — Bollenwees",
+    "canton": "AI",
+    "difficulty": "T2",
+    "min_alt_m": 1480,
+    "max_alt_m": 1795,
+    "lat": 47.3028,
+    "lon": 9.4253,
+    "length_km": 6.5
+  },
+  {
+    "name": "Ebenalp — Seealpsee",
+    "canton": "AI",
+    "difficulty": "T2",
+    "min_alt_m": 1120,
+    "max_alt_m": 1644,
+    "lat": 47.2822,
+    "lon": 9.3967,
+    "length_km": 5.3
+  },
+  {
+    "name": "Schäfler Ridge",
+    "canton": "AI",
+    "difficulty": "T4",
+    "min_alt_m": 1644,
+    "max_alt_m": 2049,
+    "lat": 47.2700,
+    "lon": 9.3750,
+    "length_km": 4.1
+  },
+  {
+    "name": "Pilatus — Tomlishorn",
+    "canton": "LU/OW",
+    "difficulty": "T2",
+    "min_alt_m": 2073,
+    "max_alt_m": 2128,
+    "lat": 46.9789,
+    "lon": 8.2531,
+    "length_km": 3.2
+  },
+  {
+    "name": "Rigi Kulm via Känzeli",
+    "canton": "SZ",
+    "difficulty": "T1",
+    "min_alt_m": 1432,
+    "max_alt_m": 1798,
+    "lat": 47.0573,
+    "lon": 8.4855,
+    "length_km": 4.0
+  },
+  {
+    "name": "Niederhorn — Burgfeldstand",
+    "canton": "BE",
+    "difficulty": "T2",
+    "min_alt_m": 1950,
+    "max_alt_m": 2063,
+    "lat": 46.7242,
+    "lon": 7.7583,
+    "length_km": 5.6
+  },
+  {
+    "name": "Faulhorn — First",
+    "canton": "BE",
+    "difficulty": "T2",
+    "min_alt_m": 2167,
+    "max_alt_m": 2681,
+    "lat": 46.6638,
+    "lon": 8.1225,
+    "length_km": 8.0
+  },
+  {
+    "name": "Matterhorn — Hörnlihütte",
+    "canton": "VS",
+    "difficulty": "T4",
+    "min_alt_m": 2583,
+    "max_alt_m": 3260,
+    "lat": 45.9800,
+    "lon": 7.6506,
+    "length_km": 6.8
+  },
+  {
+    "name": "Gornergrat Panorama",
+    "canton": "VS",
+    "difficulty": "T2",
+    "min_alt_m": 2582,
+    "max_alt_m": 3089,
+    "lat": 45.9837,
+    "lon": 7.7842,
+    "length_km": 7.1
+  },
+  {
+    "name": "Piz Languard",
+    "canton": "GR",
+    "difficulty": "T3",
+    "min_alt_m": 2240,
+    "max_alt_m": 3262,
+    "lat": 46.5050,
+    "lon": 9.9294,
+    "length_km": 5.9
+  },
+  {
+    "name": "Muottas Muragl — Alp Languard",
+    "canton": "GR",
+    "difficulty": "T2",
+    "min_alt_m": 2130,
+    "max_alt_m": 2700,
+    "lat": 46.5189,
+    "lon": 9.9144,
+    "length_km": 6.3
+  },
+  {
+    "name": "Schilthorn — Birg",
+    "canton": "BE",
+    "difficulty": "T3",
+    "min_alt_m": 2677,
+    "max_alt_m": 2970,
+    "lat": 46.5583,
+    "lon": 7.8350,
+    "length_km": 4.7
+  },
+  {
+    "name": "Oeschinensee Rundweg",
+    "canton": "BE",
+    "difficulty": "T2",
+    "min_alt_m": 1578,
+    "max_alt_m": 1900,
+    "lat": 46.4972,
+    "lon": 7.7303,
+    "length_km": 6.0
+  },
+  {
+    "name": "Creux du Van",
+    "canton": "NE",
+    "difficulty": "T2",
+    "min_alt_m": 750,
+    "max_alt_m": 1463,
+    "lat": 46.9342,
+    "lon": 6.7308,
+    "length_km": 10.5
+  },
+  {
+    "name": "Monte Generoso",
+    "canton": "TI",
+    "difficulty": "T2",
+    "min_alt_m": 1605,
+    "max_alt_m": 1701,
+    "lat": 45.9272,
+    "lon": 9.0167,
+    "length_km": 5.8
+  },
+  {
+    "name": "Kronberg — Jakobsbad",
+    "canton": "AI",
+    "difficulty": "T2",
+    "min_alt_m": 872,
+    "max_alt_m": 1663,
+    "lat": 47.2917,
+    "lon": 9.3333,
+    "length_km": 7.2
+  },
+  {
+    "name": "Alpstein — Meglisalp",
+    "canton": "AI",
+    "difficulty": "T3",
+    "min_alt_m": 1520,
+    "max_alt_m": 2153,
+    "lat": 47.2567,
+    "lon": 9.3833,
+    "length_km": 6.4
+  },
+  {
+    "name": "Titlis — Trübsee",
+    "canton": "OW",
+    "difficulty": "T3",
+    "min_alt_m": 1800,
+    "max_alt_m": 3020,
+    "lat": 46.7708,
+    "lon": 8.4372,
+    "length_km": 7.9
+  }
+]

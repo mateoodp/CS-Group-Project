@@ -1,0 +1,18 @@
+# Streamlit theme + server config
+# Docs: https://docs.streamlit.io/library/advanced-features/configuration
+
+[theme]
+# Swiss alpine green palette
+primaryColor = "#1E7B3A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F5F1"
+textColor = "#262730"
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+port = 8501
+
+[browser]
+gatherUsageStats = false

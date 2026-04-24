@@ -1,0 +1,51 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ---------- Virtual env ----------
+.venv/
+venv/
+env/
+ENV/
+
+# ---------- Build / dist ----------
+build/
+dist/
+*.egg-info/
+*.egg
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+
+# ---------- Streamlit ----------
+.streamlit/secrets.toml
+
+# ---------- Our app ----------
+# SQLite DB is intentionally tracked (small, seeds the demo).
+# Uncomment the next line ONLY if the DB grows too large.
+# hiking_app.db
+hiking_app.db-journal
+hiking_app.db-wal
+hiking_app.db-shm
+
+# Local caches
+.cache/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Coverage / testing
+.coverage
+htmlcov/
+.pytest_cache/
