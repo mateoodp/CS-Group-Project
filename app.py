@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import streamlit as st
 
-# Local imports — keep these light so the landing page loads fast.
-from data.db_manager import setup_db
-from utils.constants import APP_TITLE, APP_TAGLINE, DEFAULT_RISK_TOLERANCE
+from data import db_manager
+from ml import trail_classifier
+from utils.constants import APP_TAGLINE, APP_TITLE, DEFAULT_RISK_TOLERANCE
+from utils.sidebar import render_shared_sidebar
 
 # ---------------------------------------------------------------------------
 # Page config — MUST be the first Streamlit command in the script.
@@ -34,60 +35,60 @@ st.set_page_config(
 
 
 def initialise_session_state() -> None:
-    """Seed ``st.session_state`` with the keys shared across all pages.
-
-    This is called once per session. Each page can safely assume these keys
-    exist. If you need a new shared key (e.g. 'selected_date'), add it here
-    so the whole team knows about it.
-    """
+    """Seed shared keys used across all pages."""
     defaults: dict = {
         "selected_trail_id": None,
         "selected_date": None,
-        "risk_tolerance": DEFAULT_RISK_TOLERANCE,   # 1 = cautious, 5 = bold
+        "risk_tolerance": DEFAULT_RISK_TOLERANCE,
         "last_weather_refresh": None,
-        "model_version": None,
+        "last_metrics": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
 
 def bootstrap() -> None:
-    """One-time setup: create SQLite tables and seed the trails table.
-
-    TODO (TM2): make ``setup_db`` idempotent so this is safe to call on every
-    start. Should return quickly if the DB already exists.
-    """
-    setup_db()
+    """One-time setup: create SQLite tables and seed the trails table."""
+    db_manager.setup_db()
 
 
 def render_landing() -> None:
-    """Landing view shown at ``app.py`` itself.
-
-    The real UI lives in ``pages/``. This page just welcomes the user and
-    points them to the sidebar.
-    """
     st.title(f"🏔️ {APP_TITLE}")
     st.caption(APP_TAGLINE)
 
+    n_trails = len(db_manager.get_all_trails())
+    n_weather = len(db_manager.get_all_weather())
+    has_model = trail_classifier.model_exists()
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Trails", n_trails)
+    c2.metric("Weather rows cached", f"{n_weather:,}")
+    c3.metric("Model trained", "✅" if has_model else "❌ — see About tab")
+
     st.markdown(
         """
-        **Welcome!** Use the sidebar to navigate:
+        ## Get started
 
-        1. **Dashboard** — interactive map of Swiss trails with today's verdict
-        2. **Forecast** — 7-day risk timeline for the selected trail
-        3. **Compare** — side-by-side comparison of up to 4 trails
-        4. **About** — ML metrics, feature importance, and contribution matrix
+        1. **Pick a trail** in the sidebar (date, risk tolerance).
+        2. Open **🗺️ Dashboard** for the colour-coded map and elevation profile.
+        3. Open **📈 Forecast** for a 7-day timeline and per-day verdicts.
+        4. Open **🔀 Compare** to weigh up to 4 trails side by side.
+        5. Open **ℹ️ About** to see the ML pipeline, retrain the model, and
+           inspect the contribution matrix.
+
+        ---
+
+        On a fresh install, the SQLite database has only trails — no weather
+        and no model. Open the **About** tab → click **Seed historical weather**
+        → click **Retrain model**. After that everything is cached.
         """
     )
 
-    # TODO (TM1): add hero image / banner of a Swiss alpine scene here.
-    # TODO (TM1): surface the "last model retrained" timestamp.
-
 
 def main() -> None:
-    """Application entry point."""
     bootstrap()
     initialise_session_state()
+    render_shared_sidebar()
     render_landing()
 
 
