@@ -52,14 +52,8 @@ def label_row(
 
     Rules (applied in order; first match wins):
 
-    1. **AVOID** if
-        - trail max is above (snowline - buffer), i.e. snow on upper section, OR
-        - sustained wind > ``AVOID_WIND_KMH``, OR
-        - daily precipitation > ``AVOID_PRECIP_MM``, OR
-        - temperature < ``AVOID_TEMP_C``.
-
-    2. **BORDERLINE** if any moderate threshold is crossed.
-
+    1. **AVOID** if any "hard" threshold is crossed.
+    2. **BORDERLINE** if any "moderate" threshold is crossed.
     3. Otherwise **SAFE**.
 
     Args:
@@ -71,22 +65,49 @@ def label_row(
 
     Returns:
         One of ``"SAFE"``, ``"BORDERLINE"``, ``"AVOID"``.
-
-    TODO (TM5): implement the rule cascade.
     """
-    raise NotImplementedError
+    if (
+        trail_max_alt_m > snowline_m - SNOWLINE_BUFFER_M
+        or wind_kmh > AVOID_WIND_KMH
+        or precip_mm > AVOID_PRECIP_MM
+        or temp_c < AVOID_TEMP_C
+    ):
+        return "AVOID"
+
+    if (
+        trail_max_alt_m > snowline_m - 500
+        or wind_kmh > BORDERLINE_WIND_KMH
+        or precip_mm > BORDERLINE_PRECIP_MM
+        or temp_c < BORDERLINE_TEMP_C
+    ):
+        return "BORDERLINE"
+
+    return "SAFE"
 
 
 def label_dataframe(df: pd.DataFrame) -> pd.Series:
     """Vectorised labelling of a weather DataFrame.
 
-    Expected columns: ``temp_c``, ``wind_kmh``, ``precip_mm``, ``snowline_m``,
-    and either ``trail_max_alt_m`` or a trail_id that can be joined.
-
-    TODO (TM5): implement using boolean masks for speed, then fall back to
-    ``df.apply(label_row, axis=1)`` if readability matters more than speed.
+    Required columns: ``temp_c``, ``wind_kmh``, ``precip_mm``, ``snowline_m``,
+    ``trail_max_alt_m``.
     """
-    raise NotImplementedError
+    avoid_mask = (
+        (df["trail_max_alt_m"] > df["snowline_m"] - SNOWLINE_BUFFER_M)
+        | (df["wind_kmh"] > AVOID_WIND_KMH)
+        | (df["precip_mm"] > AVOID_PRECIP_MM)
+        | (df["temp_c"] < AVOID_TEMP_C)
+    )
+    borderline_mask = (
+        (df["trail_max_alt_m"] > df["snowline_m"] - 500)
+        | (df["wind_kmh"] > BORDERLINE_WIND_KMH)
+        | (df["precip_mm"] > BORDERLINE_PRECIP_MM)
+        | (df["temp_c"] < BORDERLINE_TEMP_C)
+    )
+
+    labels = pd.Series(["SAFE"] * len(df), index=df.index, dtype=object)
+    labels[borderline_mask] = "BORDERLINE"
+    labels[avoid_mask] = "AVOID"  # AVOID overrides BORDERLINE.
+    return labels
 
 
 # ---------------------------------------------------------------------------

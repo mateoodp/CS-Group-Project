@@ -73,4 +73,9 @@ def test_setup_db_creates_tables(tmp_path, monkeypatch) -> None:
 
     with sqlite3.connect(test_db) as conn:
         n_trails = conn.execute("SELECT COUNT(*) FROM trails").fetchone()[0]
-    assert n_trails == 20, "Expected 20 seeded trails"
+    assert n_trails > 200, f"Expected 200+ seeded trails, got {n_trails}"
+
+    # Schema includes the region column (added in v2).
+    with sqlite3.connect(test_db) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(trails)").fetchall()}
+    assert "region" in cols, "trails.region column missing"

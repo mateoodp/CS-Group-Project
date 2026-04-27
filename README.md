@@ -25,12 +25,19 @@ source .venv/bin/activate      # on Windows: .venv\Scripts\activate
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. First-run setup — creates SQLite DB and seeds the 20 trails
-python -c "from data.db_manager import setup_db; setup_db()"
+# 4. First-run setup — creates SQLite DB, fetches 1 year of weather,
+#    trains the Random Forest. Takes ~30s. Idempotent.
+python -m scripts.bootstrap            # 1 year of history
+# or:
+python -m scripts.bootstrap --years 2  # full 2 years (~60s)
 
 # 5. Launch the Streamlit app
 streamlit run app.py
 ```
+
+If you'd rather set up incrementally (no archive fetch on first launch),
+just run the app — the **About** tab has buttons to seed weather and
+retrain the model when you're ready.
 
 The app opens on `http://localhost:8501`.
 
