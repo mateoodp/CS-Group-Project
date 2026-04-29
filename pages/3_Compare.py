@@ -137,6 +137,14 @@ def render_summary_table(rows: list[dict]) -> None:
         })
     st.dataframe(pd.DataFrame(table), use_container_width=True, hide_index=True)
 
+    st.markdown("##### Open a trail's detail page")
+    cols = st.columns(len(rows))
+    for col, r in zip(cols, rows):
+        if col.button(f"🏔️ {r['name']}", key=f"compare_open_{r['trail_id']}",
+                      use_container_width=True):
+            st.session_state["selected_trail_id"] = r["trail_id"]
+            st.switch_page("pages/6_Trail_Detail.py")
+
 
 def main() -> None:
     render_shared_sidebar()

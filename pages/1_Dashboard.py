@@ -235,7 +235,15 @@ def main() -> None:
     render_map(trails)
     st.divider()
 
-    st.markdown(f"### Selected: **{trail['name']}** ({trail['canton']} · {trail['difficulty']})")
+    title_col, btn_col = st.columns([5, 1])
+    title_col.markdown(
+        f"### Selected: **{trail['name']}** ({trail['canton']} · {trail['difficulty']})"
+    )
+    if btn_col.button("🏔️ Trail details", use_container_width=True,
+                      key="dashboard_detail_btn"):
+        st.session_state["selected_trail_id"] = trail["id"]
+        st.switch_page("pages/6_Trail_Detail.py")
+
     verdict, conf, source = _verdict_for_today(trail, allow_fetch=True)
     risk = st.session_state.get("risk_tolerance", 3)
     adjusted = predictions.apply_risk_tolerance(verdict, risk) if verdict in {"SAFE","BORDERLINE","AVOID"} else verdict

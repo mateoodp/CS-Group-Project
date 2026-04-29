@@ -73,7 +73,9 @@ def render_landing() -> None:
         2. Open **🗺️ Dashboard** for the colour-coded map and elevation profile.
         3. Open **📈 Forecast** for a 7-day timeline and per-day verdicts.
         4. Open **🔀 Compare** to weigh up to 4 trails side by side.
-        5. Open **ℹ️ About** to see the ML pipeline, retrain the model, and
+        5. Open **🧭 Recommend** to answer a 5-question quiz and get the best
+           hikes ranked for today or any day in the next week.
+        6. Open **ℹ️ About** to see the ML pipeline, retrain the model, and
            inspect the contribution matrix.
 
         ---
