@@ -1,17 +1,19 @@
-"""Recommend page — quiz + date picker → ranked best hikes.
+"""Find a hike — front door of the app.
 
-The user answers a short quiz (canton, region, difficulty, length, max
-altitude) and picks a date within the 7-day forecast horizon. We then:
+User answers a 5-question quiz (canton, region, difficulty, length, max
+altitude) and picks a date within the 7-day forecast horizon. The page:
 
-    1. Filter trails by the quiz answers.
-    2. Refresh each candidate's forecast cache (no-op if fresh).
-    3. Predict the verdict for the chosen date.
-    4. Rank by verdict ascending (SAFE first), then by confidence.
-    5. Render the top results as cards.
+    1. Filters trails by the quiz answers.
+    2. Refreshes each candidate's forecast cache (no-op if fresh).
+    3. Predicts the verdict for the chosen date.
+    4. Ranks by verdict ascending (SAFE first), then by confidence.
+    5. Renders the top results as cards. Click a card → Trail Detail.
 """
 
 from __future__ import annotations
 
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
 import streamlit as st
@@ -19,10 +21,13 @@ import streamlit as st
 from data import db_manager, weather_fetcher
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
+from utils.sidebar import render_shared_sidebar
+from utils.topnav import render_top_nav
 from utils.trail_detail import difficulty_dots_html, naismith_time
 
 st.set_page_config(
-    page_title=f"Recommend · {APP_TITLE}", page_icon="🧭", layout="wide"
+    page_title=f"Find · {APP_TITLE}", page_icon="🧭", layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 VERDICT_RANK = {"SAFE": 0, "BORDERLINE": 1, "AVOID": 2, "—": 3}
@@ -110,15 +115,44 @@ def render_quiz(meta: dict) -> dict | None:
     }
 
 
-def _score_trail(trail, target_date: date, risk: int) -> dict:
-    """Refresh forecast (cached) and score a trail for the target date."""
+PARALLEL_WORKERS: int = 8     # how many trails we fetch in parallel
+MAX_FETCH_RETRIES: int = 1    # retry once on failure (so total: 2 attempts)
+
+
+def _ensure_snapshot(trail, target_date: date) -> tuple[dict | None, str | None]:
+    """Try hard to get a cached snapshot for ``(trail, target_date)``.
+
+    Returns ``(snapshot_dict_or_none, error_message_or_none)``. Tries the
+    cache first, then a fetch, then a forced refetch as a fallback. We
+    surface the *last* error so the UI can show users why a trail is
+    missing — never silently degrade to "no data".
+    """
     snap = db_manager.get_weather_for_date(trail["id"], target_date)
-    if snap is None:
+    if snap is not None:
+        return dict(snap), None
+
+    last_err: Exception | None = None
+    for attempt in range(MAX_FETCH_RETRIES + 1):
         try:
-            weather_fetcher.refresh_cache(trail["id"], trail["lat"], trail["lon"])
+            weather_fetcher.refresh_cache(
+                trail["id"], trail["lat"], trail["lon"],
+                force=(attempt > 0),
+            )
             snap = db_manager.get_weather_for_date(trail["id"], target_date)
-        except Exception:
-            snap = None
+            if snap is not None:
+                return dict(snap), None
+        except Exception as e:
+            last_err = e
+
+    err = f"{last_err.__class__.__name__}: {last_err}" if last_err else (
+        f"forecast covers today + 6 days; date {target_date} is out of range"
+    )
+    return None, err
+
+
+def _score_trail(trail, target_date: date, risk: int) -> dict:
+    """Score one trail. Always returns a complete row (even on failure)."""
+    snap, err = _ensure_snapshot(trail, target_date)
 
     if snap is None:
         return {
@@ -128,22 +162,23 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
             "adjusted": "—",
             "confidence": 0.0,
             "source": "no data",
+            "error": err,
             "caveats": [],
             "rank_key": (VERDICT_RANK["—"], 1.0, trail["name"].lower()),
         }
 
-    snap_dict = dict(snap)
     verdict, conf, _, source = predictions.predict_for_snapshot(
-        snap_dict, trail["max_alt_m"]
+        snap, trail["max_alt_m"]
     )
-    adjusted, caveats = predictions.adjust_verdict(verdict, trail, snap_dict, risk)
+    adjusted, caveats = predictions.adjust_verdict(verdict, trail, snap, risk)
     return {
         "trail": trail,
-        "snapshot": snap_dict,
+        "snapshot": snap,
         "verdict": verdict,
         "adjusted": adjusted,
         "confidence": float(conf),
         "source": source,
+        "error": None,
         "caveats": caveats,
         # Lower is better: SAFE first, then high confidence, then name.
         "rank_key": (
@@ -152,6 +187,28 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
             trail["name"].lower(),
         ),
     }
+
+
+def _score_all_parallel(candidates, target_date: date, risk: int) -> list[dict]:
+    """Score every candidate in parallel with a small thread pool + progress."""
+    results: list[dict] = []
+    progress = st.progress(
+        0.0, text=f"Checking the forecast for {len(candidates)} trail(s)…"
+    )
+    done = 0
+    with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+        futures = {
+            ex.submit(_score_trail, t, target_date, risk): t for t in candidates
+        }
+        for fut in as_completed(futures):
+            results.append(fut.result())
+            done += 1
+            progress.progress(
+                done / len(candidates),
+                text=f"Scored {done}/{len(candidates)} trails…",
+            )
+    progress.empty()
+    return results
 
 
 def render_results(results: list[dict], target_date: date) -> None:
@@ -171,6 +228,26 @@ def render_results(results: list[dict], target_date: date) -> None:
         f"🟢 {summary['SAFE']} · 🟠 {summary['BORDERLINE']} · "
         f"🔴 {summary['AVOID']} · ⚪ {summary['—']}"
     )
+
+    # Surface failed fetches loudly — never silently degrade to "no data".
+    failed = [r for r in results if r.get("error")]
+    if failed:
+        sample_errors = sorted({r["error"] for r in failed})[:3]
+        with st.expander(
+            f"⚠️ {len(failed)} trail(s) couldn't be scored — show details",
+            expanded=False,
+        ):
+            st.markdown(
+                "These trails appear in the list with **no data**. The most "
+                "common cause is a transient Open-Meteo API hiccup — usually "
+                "fixes itself; click **🔁 Re-run search** above to retry."
+            )
+            st.markdown("**Sample error message(s):**")
+            for e in sample_errors:
+                st.code(e)
+            st.markdown("**Affected trails:**")
+            st.write(", ".join(r["trail"]["name"] for r in failed[:30])
+                     + ("…" if len(failed) > 30 else ""))
 
     st.subheader(f"🏆 Top {min(TOP_N, len(results))} hikes")
     st.caption("Tap any card to open the full route, weather breakdown, "
@@ -325,54 +402,122 @@ def _render_result_card(r: dict, target_date, compact: bool = False) -> None:
         if st.button("View details", key=key, use_container_width=True):
             st.session_state["selected_trail_id"] = trail["id"]
             st.session_state["selected_date"] = target_date
-            st.switch_page("pages/6_Trail_Detail.py")
+            st.switch_page("pages/Trail_Detail.py")
+
+
+def render_recent_community_feed() -> None:
+    """Bottom-of-page community section: most recent hiker reports."""
+    st.divider()
+    st.subheader("🗣️ Recent reports from hikers")
+    rows = db_manager.get_recent_user_reports(limit=6)
+    if not rows:
+        st.caption(
+            "No reports yet. Open any trail's detail page and submit one "
+            "after your hike — they go straight into the model on the next retrain."
+        )
+        return
+    cols = st.columns(min(3, len(rows)))
+    for col, r in zip(cols, rows):
+        emoji = VERDICT_EMOJI.get(r["user_label"], "⚪")
+        comment = (r["comment"] or "").strip() or "_no comment_"
+        with col:
+            with st.container(border=True):
+                st.markdown(
+                    f"{emoji} **{r['trail_name']}** — {r['user_label']}  \n"
+                    f"_{r['report_date']}_  \n{comment}"
+                )
+
+
+def _answers_signature(answers: dict) -> str:
+    """Stable hash of quiz answers — used to invalidate cached results."""
+    serialisable = {k: (v.isoformat() if isinstance(v, date) else v)
+                    for k, v in answers.items()}
+    return json.dumps(serialisable, sort_keys=True, default=str)
 
 
 def main() -> None:
+    render_top_nav()
+    render_shared_sidebar()
+
     st.title("🧭 Find my best hike")
+    st.caption(
+        "Tell us what kind of day you want and when. We'll cross-reference "
+        "your preferences with the live weather forecast and rank the hikes "
+        "that match — safest first."
+    )
 
     meta = db_manager.get_trail_metadata()
     if not meta["cantons"]:
         st.error("No trails seeded. Restart the app or run bootstrap.")
         return
 
-    answers = render_quiz(meta)
+    # 1) Render the quiz. ``submitted_answers`` is non-None *only on the
+    #    rerun immediately after Submit*. Persist into session state so the
+    #    results survive subsequent reruns (e.g. clicking "View details"
+    #    on a result card, which triggers a rerun without re-submitting).
+    submitted_answers = render_quiz(meta)
+    if submitted_answers is not None:
+        st.session_state["find_answers"] = submitted_answers
+        # Quiz changed → invalidate any cached results.
+        st.session_state.pop("find_results", None)
+        st.session_state.pop("find_answers_sig", None)
+
+    answers = st.session_state.get("find_answers")
     if answers is None:
         st.info(
-            "Fill in the quiz above and hit **Find my best hikes** to see your "
+            "👆 Fill in the quiz and hit **Find my best hikes** to see your "
             "ranked recommendations."
         )
+        render_recent_community_feed()
         return
 
-    candidates = db_manager.get_filtered_trails(
-        cantons=answers["cantons"],
-        regions=answers["regions"],
-        difficulties=answers["difficulties"],
-        min_length_km=answers["min_length_km"],
-        max_length_km=answers["max_length_km"],
-        min_alt_m=answers["min_alt_m"],
-        max_alt_m=answers["max_alt_m"],
+    # 2) "Re-run" / "Reset" controls so the user can refresh or start over.
+    bar = st.columns([1, 1, 4])
+    with bar[0]:
+        rerun_clicked = st.button("🔁 Re-run search", use_container_width=True)
+    with bar[1]:
+        if st.button("✖ Clear & restart", use_container_width=True):
+            st.session_state.pop("find_answers", None)
+            st.session_state.pop("find_results", None)
+            st.session_state.pop("find_answers_sig", None)
+            st.rerun()
+
+    # 3) Compute (or reuse) results. We cache by a hash of the answers, so
+    #    flipping pages / clicking buttons doesn't re-fetch all 234 trails.
+    sig = _answers_signature(answers)
+    cache_hit = (
+        not rerun_clicked
+        and st.session_state.get("find_answers_sig") == sig
+        and st.session_state.get("find_results") is not None
     )
 
-    if not candidates:
-        st.warning(
-            "No trails match your quiz answers. Try widening the canton, "
-            "difficulty, or length filters."
+    if cache_hit:
+        results = st.session_state["find_results"]
+    else:
+        candidates = db_manager.get_filtered_trails(
+            cantons=answers["cantons"],
+            regions=answers["regions"],
+            difficulties=answers["difficulties"],
+            min_length_km=answers["min_length_km"],
+            max_length_km=answers["max_length_km"],
+            min_alt_m=answers["min_alt_m"],
+            max_alt_m=answers["max_alt_m"],
         )
-        return
+        if not candidates:
+            st.warning(
+                "No trails match your quiz answers. Try widening the canton, "
+                "difficulty, or length filters."
+            )
+            return
 
-    target_date = answers["date"]
-    risk = st.session_state.get("risk_tolerance", 3)
+        risk = st.session_state.get("risk_tolerance", 3)
+        results = _score_all_parallel(candidates, answers["date"], risk)
+        results.sort(key=lambda r: r["rank_key"])
+        st.session_state["find_results"] = results
+        st.session_state["find_answers_sig"] = sig
 
-    progress = st.progress(0.0, text=f"Checking the forecast for {len(candidates)} trail(s)…")
-    results: list[dict] = []
-    for i, trail in enumerate(candidates, start=1):
-        results.append(_score_trail(trail, target_date, risk))
-        progress.progress(i / len(candidates), text=f"Scored {i}/{len(candidates)}")
-    progress.empty()
-
-    results.sort(key=lambda r: r["rank_key"])
-    render_results(results, target_date)
+    render_results(results, answers["date"])
+    render_recent_community_feed()
 
 
 main()
