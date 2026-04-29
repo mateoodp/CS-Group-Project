@@ -37,13 +37,18 @@ _FOLIUM_COLOUR_MAP = {
 }
 
 
-def _verdict_for_today(trail, allow_fetch: bool = False) -> tuple[str, float, str]:
+def _verdict_for_today(
+    trail, allow_fetch: bool = False
+) -> tuple[str, float, str, list[str]]:
     """Look up today's cached snapshot and predict.
 
     With 200+ trails on the map, fetching for every trail would be ~200 API
     calls. By default we read strictly from the cache and show a grey marker
     when there's no data. Set ``allow_fetch=True`` for the *selected* trail
     only — it will trigger a single refresh.
+
+    Applies the difficulty floor so a sunny T6 is **never** displayed as
+    SAFE on the map. Returns ``(verdict, confidence, source, caveats)``.
     """
     today = date.today()
     snap = db_manager.get_weather_for_date(trail["id"], today)
@@ -55,10 +60,14 @@ def _verdict_for_today(trail, allow_fetch: bool = False) -> tuple[str, float, st
             snap = None
 
     if snap is None:
-        return "—", 0.0, "no data"
+        return "—", 0.0, "no data", []
 
-    v, c, _, source = predictions.predict_for_snapshot(dict(snap), trail["max_alt_m"])
-    return v, c, source
+    snap_dict = dict(snap)
+    v, c, _, source = predictions.predict_for_snapshot(
+        snap_dict, trail["max_alt_m"]
+    )
+    floored, caveats = predictions.apply_difficulty_floor(v, trail, snap_dict)
+    return floored, c, source, caveats
 
 
 def render_map(trails) -> None:
@@ -73,12 +82,16 @@ def render_map(trails) -> None:
     rows: list[dict] = []
     selected_id = st.session_state.get("selected_trail_id")
     for trail in trails:
-        verdict, conf, source = _verdict_for_today(
+        verdict, conf, source, caveats = _verdict_for_today(
             trail, allow_fetch=(trail["id"] == selected_id)
         )
         rows.append(
             {"name": trail["name"], "verdict": verdict, "confidence": conf,
              "source": source, "canton": trail["canton"]}
+        )
+        caveat_html = (
+            f"<br><span style='font-size:0.85em; color:#C0392B;'>"
+            f"⚠️ {caveats[0]}</span>" if caveats else ""
         )
         popup_html = (
             f"<b>{trail['name']}</b><br>"
@@ -86,7 +99,7 @@ def render_map(trails) -> None:
             f"Verdict: <b style='color:{VERDICT_COLOURS.get(verdict, '#888')}'>"
             f"{VERDICT_EMOJI.get(verdict, '⚪')} {verdict}</b><br>"
             f"Confidence: {conf:.0%}<br>"
-            f"Source: {source}"
+            f"Source: {source}{caveat_html}"
         )
         folium.CircleMarker(
             location=[trail["lat"], trail["lon"]],
@@ -244,9 +257,14 @@ def main() -> None:
         st.session_state["selected_trail_id"] = trail["id"]
         st.switch_page("pages/6_Trail_Detail.py")
 
-    verdict, conf, source = _verdict_for_today(trail, allow_fetch=True)
+    verdict, conf, source, caveats = _verdict_for_today(trail, allow_fetch=True)
     risk = st.session_state.get("risk_tolerance", 3)
-    adjusted = predictions.apply_risk_tolerance(verdict, risk) if verdict in {"SAFE","BORDERLINE","AVOID"} else verdict
+    if verdict in {"SAFE", "BORDERLINE", "AVOID"}:
+        adjusted = predictions.apply_risk_tolerance(
+            verdict, risk, difficulty=trail["difficulty"]
+        )
+    else:
+        adjusted = verdict
     c1, c2, c3 = st.columns(3)
     c1.markdown(
         f"#### {VERDICT_EMOJI.get(verdict,'⚪')} Model verdict: **{verdict}**  \n"
@@ -258,6 +276,9 @@ def main() -> None:
     )
     c3.metric("Length / max altitude",
               f"{trail['length_km']} km", f"{trail['max_alt_m']} m")
+
+    for caveat in caveats:
+        st.warning(f"⚠️ {caveat}")
 
     render_elevation_profile(trail)
     st.divider()

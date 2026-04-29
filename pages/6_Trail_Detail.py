@@ -24,9 +24,13 @@ from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
 from utils.trail_detail import (
     analyse_tricky_sections,
+    difficulty_dots_html,
     fetch_trail_images,
+    hazard_points,
     interpret_weather,
+    naismith_time,
     synthetic_route,
+    weather_at_altitude,
 )
 
 st.set_page_config(
@@ -38,32 +42,87 @@ st.set_page_config(
 # Header
 # ---------------------------------------------------------------------------
 
+_DETAIL_CSS: str = """
+<style>
+  .trail-hero {
+    background: #ffffff;
+    border: 1px solid #e6e8eb;
+    border-radius: 14px;
+    padding: 20px 22px;
+    margin-bottom: 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .trail-hero-title {
+    font-size: 1.6rem; font-weight: 700; line-height: 1.2;
+    color: #1a1a1a; margin-bottom: 4px;
+  }
+  .trail-hero-meta {
+    color: #6b7177; font-size: 0.92rem; margin-bottom: 14px;
+  }
+  .trail-hero-stats {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 18px; padding-top: 14px;
+    border-top: 1px solid #f0f1f3;
+  }
+  .stat-value { font-size: 1.1rem; font-weight: 600; color: #1a1a1a; }
+  .stat-label { font-size: 0.78rem; color: #8b9197; margin-top: 2px; }
+  .verdict-chip {
+    float: right; background: var(--c, #888); color: white;
+    padding: 6px 14px; border-radius: 999px;
+    font-size: 0.85rem; font-weight: 600;
+  }
+  .verdict-chip-sub { display: block; font-size: 0.72rem; opacity: 0.85; }
+  .alt-card {
+    background: #ffffff; border: 1px solid #e6e8eb;
+    border-radius: 12px; padding: 14px 16px;
+  }
+  .alt-card h5 { margin: 0 0 8px 0; font-size: 0.92rem; color: #4a4a4a; }
+  .alt-card .alt-temp { font-size: 1.6rem; font-weight: 700; }
+  .alt-card .alt-row { color: #6b7177; font-size: 0.88rem; margin-top: 4px; }
+</style>
+"""
+
+
 def render_header(trail, snapshot, verdict: str, conf: float, source: str,
                   adjusted: str, target_date) -> None:
     colour = VERDICT_COLOURS.get(adjusted, "#888888")
     emoji = VERDICT_EMOJI.get(adjusted, "⚪")
+    ascent = trail["max_alt_m"] - trail["min_alt_m"]
+    time_est = naismith_time(trail["length_km"], ascent)
 
+    st.markdown(_DETAIL_CSS, unsafe_allow_html=True)
     st.markdown(
         f"""
-        <div style="display:flex; justify-content:space-between;
-                    align-items:center; gap:14px; flex-wrap:wrap;
-                    border-left:8px solid {colour}; background:#fafafa;
-                    padding:14px 18px; border-radius:8px;">
-          <div>
-            <div style="font-size:1.6rem; font-weight:700;">
-              {trail['name']}
-            </div>
-            <div style="opacity:0.75;">
-              {trail['canton']} · {trail['region']} ·
-              {trail['difficulty']} ·
-              {trail['length_km']} km · {trail['min_alt_m']}–{trail['max_alt_m']} m
-            </div>
-          </div>
-          <div style="background:{colour}; color:white; padding:8px 16px;
-                      border-radius:18px; font-weight:700; white-space:nowrap;">
+        <div class="trail-hero">
+          <span class="verdict-chip" style="--c:{colour};">
             {emoji} {adjusted} · {conf:.0%}
-            <div style="font-size:0.72rem; opacity:0.9;">
+            <span class="verdict-chip-sub">
               {target_date.strftime('%a %d %b')} · {source}
+            </span>
+          </span>
+          <div class="trail-hero-title">{trail['name']}</div>
+          <div class="trail-hero-meta">
+            {difficulty_dots_html(trail['difficulty'])}
+            <span style="margin-left:10px;">
+              · {trail['canton']} · {trail['region']}
+            </span>
+          </div>
+          <div class="trail-hero-stats">
+            <div>
+              <div class="stat-value">{time_est}</div>
+              <div class="stat-label">Estimated time</div>
+            </div>
+            <div>
+              <div class="stat-value">{ascent} m</div>
+              <div class="stat-label">Ascent</div>
+            </div>
+            <div>
+              <div class="stat-value">{trail['length_km']} km</div>
+              <div class="stat-label">Length</div>
+            </div>
+            <div>
+              <div class="stat-value">{trail['max_alt_m']} m</div>
+              <div class="stat-label">Max altitude</div>
             </div>
           </div>
         </div>
@@ -104,7 +163,7 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
     st.caption(f"Verdict source: **{source}** · Confidence: **{conf:.0%}**")
 
 
-def tab_route(trail) -> None:
+def tab_route(trail, snapshot) -> None:
     st.subheader("🗺️ Route on the map")
     st.caption(
         "Note: detailed GPX traces aren't bundled with the seeded trails, so "
@@ -114,13 +173,23 @@ def tab_route(trail) -> None:
     )
 
     pts = synthetic_route(trail["lat"], trail["lon"], trail["length_km"])
+    # OpenTopoMap gives us the same beige topographic look as the reference
+    # design — contour lines, shaded relief, distinct trail routing.
     fmap = folium.Map(
         location=[trail["lat"], trail["lon"]],
         zoom_start=13,
-        tiles="OpenStreetMap",
+        tiles="OpenTopoMap",
+        attr=("Map data: © <a href='https://www.openstreetmap.org/copyright'>"
+              "OpenStreetMap</a> contributors, SRTM | Map style: © "
+              "<a href='https://opentopomap.org'>OpenTopoMap</a> "
+              "(CC-BY-SA)"),
     )
+
     folium.PolyLine(
-        pts, color="#1E7B3A", weight=4, opacity=0.85,
+        pts,
+        color="#1f7ae0",   # vivid blue, matching the reference route line
+        weight=5,
+        opacity=0.95,
         tooltip=f"≈{trail['length_km']} km loop",
     ).add_to(fmap)
     folium.Marker(
@@ -129,13 +198,38 @@ def tab_route(trail) -> None:
         icon=folium.Icon(color="green", icon="play", prefix="fa"),
     ).add_to(fmap)
 
-    # Highlight the conceptual "halfway" / summit point on the loop.
     half = pts[len(pts) // 2]
     folium.Marker(
         [half[0], half[1]],
-        tooltip=f"Approx. summit · {trail['max_alt_m']} m",
-        icon=folium.Icon(color="red", icon="flag", prefix="fa"),
+        tooltip=f"Summit · approx. {trail['max_alt_m']} m",
+        icon=folium.Icon(color="darkblue", icon="flag", prefix="fa"),
     ).add_to(fmap)
+
+    # Yellow / red hazard diamonds keyed off difficulty + today's weather.
+    hazards = hazard_points(pts, trail, snapshot)
+    for i, h in enumerate(hazards, start=1):
+        bg = "#E69F00" if h["severity"] == "warn" else "#C0392B"
+        diamond = folium.DivIcon(html=(
+            f"<div style='width:30px; height:30px; transform:rotate(45deg);"
+            f"background:{bg}; border:2px solid #000;"
+            f"display:flex; align-items:center; justify-content:center;'>"
+            f"<span style='transform:rotate(-45deg); font-weight:700;"
+            f"color:#000; font-size:14px;'>!</span></div>"
+        ))
+        folium.Marker(
+            [h["lat"], h["lon"]],
+            tooltip=h["label"],
+            icon=diamond,
+        ).add_to(fmap)
+
+    if hazards:
+        st.markdown(
+            "<div style='font-size:0.85rem; color:#6b7177; margin:6px 0 8px;'>"
+            "🟡 = caution · 🔴 = serious hazard. Hover any diamond on the map "
+            "for details."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     st_folium(fmap, width=None, height=480, returned_objects=[])
 
@@ -191,12 +285,74 @@ def tab_tricky(trail, snapshot) -> None:
             st.write(p["blurb"])
 
 
+def _altitude_card(label: str, alt_m: int, projected: dict | None) -> str:
+    """Build the HTML for one of the two altitude cards (top vs bottom)."""
+    if not projected:
+        return (
+            f"<div class='alt-card'>"
+            f"<h5>{label} · {alt_m} m</h5>"
+            f"<div class='alt-row'>No forecast cached for this day.</div>"
+            f"</div>"
+        )
+    temp = projected.get("temp_c")
+    wind = projected.get("wind_kmh")
+    precip = projected.get("precip_mm")
+    snowline = projected.get("snowline_m")
+
+    bottom_rows = []
+    if wind is not None:
+        bottom_rows.append(f"💨 {wind:.0f} km/h wind")
+    if precip is not None:
+        bottom_rows.append(f"☔ {precip:.1f} mm precip")
+    if snowline is not None:
+        margin = int(snowline) - alt_m
+        marker = "above" if margin >= 0 else "below"
+        bottom_rows.append(
+            f"❄️ snowline {abs(margin)} m {marker} you"
+        )
+
+    rows_html = "".join(
+        f"<div class='alt-row'>{r}</div>" for r in bottom_rows
+    )
+    temp_str = f"{temp:.0f}°C" if temp is not None else "—"
+    return (
+        f"<div class='alt-card'>"
+        f"<h5>{label} · {alt_m} m</h5>"
+        f"<div class='alt-temp'>{temp_str}</div>"
+        f"{rows_html}"
+        f"</div>"
+    )
+
+
 def tab_weather(trail, snapshot, verdict, adjusted) -> None:
     st.subheader("🌦️ Why is it considered " + (adjusted or "—") + "?")
     interp = interpret_weather(snapshot, trail, adjusted or verdict)
 
     if interp["headline"]:
         st.info(interp["headline"])
+
+    # Top vs Bottom weather (lapse-rate projection).
+    st.markdown("##### Top vs. bottom weather")
+    st.caption(
+        "Forecasts are reported at one point. We project them to the trail's "
+        "minimum and maximum altitudes using the standard atmospheric lapse "
+        "rate (−6.5 °C / 1000 m of climb). Treat as a guide, not a guarantee."
+    )
+    bottom_proj = weather_at_altitude(
+        snapshot, trail["min_alt_m"], reference_alt_m=trail["min_alt_m"]
+    )
+    top_proj = weather_at_altitude(
+        snapshot, trail["max_alt_m"], reference_alt_m=trail["min_alt_m"]
+    )
+    col_top, col_bot = st.columns(2)
+    col_top.markdown(
+        _altitude_card("⛰️ Top of the trail", trail["max_alt_m"], top_proj),
+        unsafe_allow_html=True,
+    )
+    col_bot.markdown(
+        _altitude_card("🌲 Bottom of the trail", trail["min_alt_m"], bottom_proj),
+        unsafe_allow_html=True,
+    )
 
     with st.container(border=True):
         st.markdown("##### Top reasons")
@@ -296,10 +452,17 @@ def main() -> None:
         verdict, conf, source = "—", 0.0, "no data"
 
     risk = st.session_state.get("risk_tolerance", 3)
-    adjusted = (predictions.apply_risk_tolerance(verdict, risk)
-                if verdict in {"SAFE", "BORDERLINE", "AVOID"} else verdict)
+    if verdict in {"SAFE", "BORDERLINE", "AVOID"}:
+        adjusted, caveats = predictions.adjust_verdict(
+            verdict, trail, snapshot, risk
+        )
+    else:
+        adjusted, caveats = verdict, []
 
     render_header(trail, snapshot, verdict, conf, source, adjusted, target_date)
+
+    for c in caveats:
+        st.warning(f"⚠️ **Safety lock:** {c}")
 
     nav_cols = st.columns(3)
     nav_cols[0].page_link("pages/5_Recommend.py", label="← Back to Recommend", icon="🧭")
@@ -312,7 +475,7 @@ def main() -> None:
     with overview:
         tab_overview(trail, snapshot, verdict, conf, source)
     with route:
-        tab_route(trail)
+        tab_route(trail, snapshot)
     with tricky:
         tab_tricky(trail, snapshot)
     with weather:

@@ -168,16 +168,22 @@ def main() -> None:
 
     risk = st.session_state.get("risk_tolerance", 3)
     rows = []
+    aggregated_caveats: list[tuple[str, str]] = []
     for tid in trail_ids:
         trail = db_manager.get_trail(tid)
         snap = _today_snapshot(tid)
+        caveats: list[str] = []
         if snap is None:
             verdict, conf = "—", 0.0
         else:
             verdict, conf, _, _ = predictions.predict_for_snapshot(
                 snap, trail["max_alt_m"]
             )
-            verdict = predictions.apply_risk_tolerance(verdict, risk)
+            verdict, caveats = predictions.adjust_verdict(
+                verdict, trail, snap, risk
+            )
+        for c in caveats:
+            aggregated_caveats.append((trail["name"], c))
         rows.append({
             "trail_id": tid,
             "name": trail["name"],
@@ -187,6 +193,9 @@ def main() -> None:
             "risk_score": VERDICT_SCORE.get(verdict, 2),
             "snapshot": snap,
         })
+
+    for trail_name, caveat in aggregated_caveats:
+        st.warning(f"⚠️ **{trail_name}** — {caveat}")
 
     render_bar_chart(rows)
     render_radar_chart(rows)

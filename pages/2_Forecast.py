@@ -75,6 +75,7 @@ def render_verdict_cards(df, trail, risk_tolerance: int) -> None:
         st.info("Refresh the cache to populate the forecast.")
         return
 
+    aggregated_caveats: list[str] = []
     cols = st.columns(len(df))
     for i, (col, row) in enumerate(zip(cols, df.itertuples(index=False))):
         snap = {
@@ -87,7 +88,12 @@ def render_verdict_cards(df, trail, risk_tolerance: int) -> None:
         verdict, conf, _, source = predictions.predict_for_snapshot(
             snap, trail["max_alt_m"]
         )
-        adjusted = predictions.apply_risk_tolerance(verdict, risk_tolerance)
+        adjusted, caveats = predictions.adjust_verdict(
+            verdict, trail, snap, risk_tolerance
+        )
+        for c in caveats:
+            if c not in aggregated_caveats:
+                aggregated_caveats.append(c)
         colour = VERDICT_COLOURS[adjusted]
         with col:
             st.markdown(
@@ -112,6 +118,9 @@ def render_verdict_cards(df, trail, risk_tolerance: int) -> None:
                 unsafe_allow_html=True,
             )
 
+    for c in aggregated_caveats:
+        st.warning(f"⚠️ {c}")
+
 
 # ---------------------------------------------------------------------------
 # Best-day banner
@@ -128,7 +137,7 @@ def render_best_day(df, trail, risk_tolerance: int) -> None:
             "cloud_pct": row.cloud_pct,
         }
         v, c, _, _ = predictions.predict_for_snapshot(snap, trail["max_alt_m"])
-        v = predictions.apply_risk_tolerance(v, risk_tolerance)
+        v, _ = predictions.adjust_verdict(v, trail, snap, risk_tolerance)
         score = (
             {"SAFE": 0, "BORDERLINE": 1, "AVOID": 2}[v] * 1.0
             - c * 0.1
@@ -136,16 +145,28 @@ def render_best_day(df, trail, risk_tolerance: int) -> None:
         scored.append((row.snapshot_date, v, c, score))
     scored.sort(key=lambda t: t[3])
     best_date, best_v, best_c, _ = scored[0]
+    grade = trail["difficulty"]
+    is_hard = grade in {"T4", "T5", "T6"}
+
     if best_v == "SAFE":
         st.success(
             f"**Best day to go:** {best_date.strftime('%A %d %B')} — "
             f"{best_v} ({best_c:.0%} confidence)."
         )
     elif best_v == "BORDERLINE":
-        st.warning(
-            f"**Best day this week:** {best_date.strftime('%A %d %B')} — "
-            f"only {best_v}. Consider rescheduling."
-        )
+        if is_hard:
+            st.warning(
+                f"**Best window this week:** {best_date.strftime('%A %d %B')} — "
+                f"BORDERLINE. Note: {grade} routes are never marked SAFE because "
+                "the terrain itself carries inherent risk. Treat this as the "
+                "best *weather*, not a safety endorsement — your skills, fitness "
+                "and equipment still need to match the route."
+            )
+        else:
+            st.warning(
+                f"**Best day this week:** {best_date.strftime('%A %d %B')} — "
+                f"only {best_v}. Consider rescheduling."
+            )
     else:
         st.error(
             f"No safe day in the next 7. Earliest watchable day: "

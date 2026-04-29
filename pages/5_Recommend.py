@@ -19,6 +19,7 @@ import streamlit as st
 from data import db_manager, weather_fetcher
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
+from utils.trail_detail import difficulty_dots_html, naismith_time
 
 st.set_page_config(
     page_title=f"Recommend · {APP_TITLE}", page_icon="🧭", layout="wide"
@@ -127,6 +128,7 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
             "adjusted": "—",
             "confidence": 0.0,
             "source": "no data",
+            "caveats": [],
             "rank_key": (VERDICT_RANK["—"], 1.0, trail["name"].lower()),
         }
 
@@ -134,7 +136,7 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
     verdict, conf, _, source = predictions.predict_for_snapshot(
         snap_dict, trail["max_alt_m"]
     )
-    adjusted = predictions.apply_risk_tolerance(verdict, risk)
+    adjusted, caveats = predictions.adjust_verdict(verdict, trail, snap_dict, risk)
     return {
         "trail": trail,
         "snapshot": snap_dict,
@@ -142,6 +144,7 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
         "adjusted": adjusted,
         "confidence": float(conf),
         "source": source,
+        "caveats": caveats,
         # Lower is better: SAFE first, then high confidence, then name.
         "rank_key": (
             VERDICT_RANK.get(adjusted, 3),
@@ -170,85 +173,159 @@ def render_results(results: list[dict], target_date: date) -> None:
     )
 
     st.subheader(f"🏆 Top {min(TOP_N, len(results))} hikes")
-    st.caption("Click **View details** on any card for the route map, weather "
-               "explanation, tricky parts, and photos.")
+    st.caption("Tap any card to open the full route, weather breakdown, "
+               "tricky parts, and photos.")
+    st.markdown(_CARD_CSS, unsafe_allow_html=True)
     top = results[:TOP_N]
 
-    for idx, r in enumerate(top, start=1):
-        trail = r["trail"]
-        snap = r["snapshot"] or {}
-        verdict = r["adjusted"]
-        colour = VERDICT_COLOURS.get(verdict, "#888888")
-        emoji = VERDICT_EMOJI.get(verdict, "⚪")
-
-        weather_bits = []
-        if snap.get("temp_c") is not None:
-            weather_bits.append(f"🌡️ {snap['temp_c']:.0f}°C")
-        if snap.get("wind_kmh") is not None:
-            weather_bits.append(f"💨 {snap['wind_kmh']:.0f} km/h")
-        if snap.get("precip_mm") is not None:
-            weather_bits.append(f"☔ {snap['precip_mm']:.1f} mm")
-        if snap.get("snowline_m") is not None:
-            weather_bits.append(f"❄️ snowline {int(snap['snowline_m'])} m")
-        weather_line = "  ·  ".join(weather_bits) or "_no weather data cached_"
-
-        with st.container(border=True):
-            info_col, btn_col = st.columns([5, 1])
-            with info_col:
-                st.markdown(
-                    f"""
-                    <div style="border-left:6px solid {colour};
-                                padding-left:12px;">
-                      <div style="font-size:1.05rem; font-weight:700;">
-                        #{idx} · {trail['name']}
-                        <span style="background:{colour}; color:white;
-                                     padding:2px 10px; border-radius:12px;
-                                     font-size:0.8rem; margin-left:8px;">
-                          {emoji} {verdict} · {r['confidence']:.0%}
-                        </span>
-                      </div>
-                      <div style="opacity:0.7; font-size:0.92rem;">
-                        {trail['canton']} · {trail['region']} ·
-                        {trail['difficulty']} ·
-                        {trail['length_km']} km · max {trail['max_alt_m']} m
-                      </div>
-                      <div style="margin-top:6px; font-size:0.9rem; opacity:0.85;">
-                        {weather_line}
-                        <span style="float:right; opacity:0.6;">
-                          source: {r['source']}
-                        </span>
-                      </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            with btn_col:
-                if st.button(
-                    "View details",
-                    key=f"detail_btn_{trail['id']}",
-                    use_container_width=True,
-                ):
-                    st.session_state["selected_trail_id"] = trail["id"]
-                    st.session_state["selected_date"] = target_date
-                    st.switch_page("pages/6_Trail_Detail.py")
+    for r in top:
+        _render_result_card(r, target_date)
 
     if len(results) > TOP_N:
         with st.expander(f"Show the other {len(results) - TOP_N} matches"):
             for r in results[TOP_N:]:
-                t = r["trail"]
-                row_l, row_r = st.columns([5, 1])
-                row_l.write(
-                    f"{VERDICT_EMOJI.get(r['adjusted'], '⚪')} "
-                    f"**{t['name']}** · {t['canton']} · {t['difficulty']} · "
-                    f"{t['length_km']} km — {r['adjusted']} ({r['confidence']:.0%})"
-                )
-                if row_r.button(
-                    "Open", key=f"detail_btn_tail_{t['id']}",
-                    use_container_width=True,
-                ):
-                    st.session_state["selected_trail_id"] = t["id"]
-                    st.session_state["selected_date"] = target_date
-                    st.switch_page("pages/6_Trail_Detail.py")
+                _render_result_card(r, target_date, compact=True)
+
+
+# ---------------------------------------------------------------------------
+# Card design — inspired by Norgeskart-style route list (clean white cards
+# on a soft background, 4-dot SAC indicator, 3-column metrics row).
+# ---------------------------------------------------------------------------
+
+_CARD_CSS: str = """
+<style>
+  .hike-card {
+    background: #ffffff;
+    border: 1px solid #e6e8eb;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  }
+  .hike-card-title {
+    font-size: 1.08rem;
+    font-weight: 700;
+    color: #1a1a1a;
+    line-height: 1.3;
+    margin-bottom: 8px;
+  }
+  .hike-card-meta {
+    font-size: 0.85rem;
+    color: #6b7177;
+    margin-bottom: 14px;
+  }
+  .hike-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    border-top: 1px solid #f0f1f3;
+    padding-top: 12px;
+  }
+  .hike-stat-value {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+  .hike-stat-label {
+    font-size: 0.78rem;
+    color: #8b9197;
+    margin-top: 2px;
+  }
+  .verdict-pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: white;
+    vertical-align: middle;
+    margin-left: 8px;
+  }
+  .safety-note {
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: #fff7ed;
+    border-left: 3px solid #C0392B;
+    border-radius: 4px;
+    font-size: 0.84rem;
+    color: #5a3a1a;
+  }
+</style>
+"""
+
+
+def _render_result_card(r: dict, target_date, compact: bool = False) -> None:
+    """Render one trail as a clean white card with a 'View details' button."""
+    trail = r["trail"]
+    verdict = r["adjusted"]
+    colour = VERDICT_COLOURS.get(verdict, "#888888")
+    emoji = VERDICT_EMOJI.get(verdict, "⚪")
+
+    ascent = trail["max_alt_m"] - trail["min_alt_m"]
+    time_est = naismith_time(trail["length_km"], ascent)
+
+    pill = (
+        f"<span class='verdict-pill' style='background:{colour};'>"
+        f"{emoji} {verdict}"
+        f"</span>"
+    )
+
+    caveat_html = ""
+    if r.get("caveats"):
+        caveat_html = (
+            f"<div class='safety-note'>⚠️ <b>Safety note:</b> "
+            f"{r['caveats'][0]}</div>"
+        )
+
+    snap = r.get("snapshot") or {}
+    weather_chip = ""
+    if snap.get("temp_c") is not None and snap.get("wind_kmh") is not None:
+        weather_chip = (
+            f"<span style='color:#6b7177; font-size:0.85rem; margin-left:auto;'>"
+            f"🌡️ {snap['temp_c']:.0f}°C · 💨 {snap['wind_kmh']:.0f} km/h"
+            f"</span>"
+        )
+
+    info_col, btn_col = st.columns([5, 1])
+    with info_col:
+        st.markdown(
+            f"""
+            <div class="hike-card">
+              <div class="hike-card-title">
+                {trail['name']} {pill}
+              </div>
+              <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                {difficulty_dots_html(trail['difficulty'])}
+                <span style="color:#6b7177; font-size:0.85rem;">
+                  · {trail['canton']} · {trail['region']}
+                </span>
+                {weather_chip}
+              </div>
+              <div class="hike-stats">
+                <div>
+                  <div class="hike-stat-value">{time_est}</div>
+                  <div class="hike-stat-label">Estimated time</div>
+                </div>
+                <div>
+                  <div class="hike-stat-value">{ascent} m</div>
+                  <div class="hike-stat-label">Ascent</div>
+                </div>
+                <div>
+                  <div class="hike-stat-value">{trail['length_km']} km</div>
+                  <div class="hike-stat-label">Length</div>
+                </div>
+              </div>
+              {caveat_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with btn_col:
+        key = f"detail_{'tail_' if compact else ''}{trail['id']}"
+        if st.button("View details", key=key, use_container_width=True):
+            st.session_state["selected_trail_id"] = trail["id"]
+            st.session_state["selected_date"] = target_date
+            st.switch_page("pages/6_Trail_Detail.py")
 
 
 def main() -> None:
