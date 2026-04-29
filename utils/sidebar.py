@@ -1,26 +1,23 @@
 """Shared sidebar — minimalist version.
 
-After the UX cleanup the sidebar only owns **two** controls:
+After the UX cleanup the sidebar owns **one** control:
 
-    1. **Risk tolerance** — a single global slider that biases every
-       displayed verdict (cautious users see harsher verdicts; bold users
-       see softer ones, with a hard safety lock for T4+ trails).
-    2. **Refresh weather** — manually re-pulls the forecast for whichever
-       trail is currently selected.
+    * **Risk tolerance** — a single global slider that biases every
+      displayed verdict (cautious users see harsher verdicts; bold users
+      see softer ones, with a hard safety lock for T4+ trails).
 
-Trail selection, date selection, and trail filtering have all moved onto
-the pages that own them (Find, Trail Detail, Compare). This makes the
-state model unambiguous: the page you're looking at is the page that owns
-the inputs.
+Trail selection, date selection, trail filtering, *and* manual weather
+refresh have all been moved out: the date/trail come from each page's
+own widgets, and weather is now refreshed automatically in the
+background by :mod:`utils.data_health`. The user never has to click a
+"refresh" button.
 """
 
 from __future__ import annotations
 
-from datetime import date
-
 import streamlit as st
 
-from data import db_manager, weather_fetcher
+from data import db_manager
 from utils.constants import (
     DEFAULT_RISK_TOLERANCE,
     RISK_SLIDER_MAX,
@@ -50,25 +47,12 @@ def render_shared_sidebar() -> None:
     selected_id = st.session_state.get("selected_trail_id")
     if selected_id is None:
         st.sidebar.caption(
-            "ℹ️ No trail picked yet. Open **🧭 Find a hike** or **🗺️ Map** "
-            "to choose one."
+            "ℹ️ Open **🧭 Find a hike** or **🗺️ Map** to choose a trail."
         )
     else:
         trail = db_manager.get_trail(selected_id)
         if trail:
             st.sidebar.caption(f"📍 Selected: **{trail['name']}**")
-            if st.sidebar.button("🔄 Refresh weather"):
-                with st.spinner("Fetching forecast…"):
-                    try:
-                        n = weather_fetcher.refresh_cache(
-                            trail["id"], trail["lat"], trail["lon"], force=True
-                        )
-                        st.session_state["last_weather_refresh"] = (
-                            f"{n} rows · {date.today().isoformat()}"
-                        )
-                        st.sidebar.success(f"Updated {n} days.")
-                    except Exception as e:
-                        st.sidebar.error(f"Refresh failed: {e}")
-            last = st.session_state.get("last_weather_refresh")
-            if last:
-                st.sidebar.caption(f"Last refresh: {last}")
+            st.sidebar.caption(
+                "Weather is fetched automatically — no refresh needed."
+            )
