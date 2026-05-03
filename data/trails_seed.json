@@ -2572,5 +2572,181 @@
     "lat": 47.5833,
     "lon": 7.6167,
     "length_km": 4.0
+  },
+  {
+    "name": "Jungfrau Eiger Walk",
+    "canton": "BE",
+    "region": "Alps",
+    "difficulty": "T2",
+    "min_alt_m": 1610,
+    "max_alt_m": 2061,
+    "lat": 46.5851,
+    "lon": 7.962,
+    "length_km": 6.0
+  },
+  {
+    "name": "Trift Brücke",
+    "canton": "BE",
+    "region": "Alps",
+    "difficulty": "T3",
+    "min_alt_m": 1100,
+    "max_alt_m": 1722,
+    "lat": 46.687,
+    "lon": 8.358,
+    "length_km": 11.0
+  },
+  {
+    "name": "Tour des Dents-du-Midi",
+    "canton": "VS",
+    "region": "Alps",
+    "difficulty": "T3",
+    "min_alt_m": 1050,
+    "max_alt_m": 2200,
+    "lat": 46.171,
+    "lon": 6.87,
+    "length_km": 14.0
+  },
+  {
+    "name": "Lavaux Vineyard Walk",
+    "canton": "VD",
+    "region": "Mittelland",
+    "difficulty": "T1",
+    "min_alt_m": 380,
+    "max_alt_m": 560,
+    "lat": 46.475,
+    "lon": 6.7,
+    "length_km": 11.0
+  },
+  {
+    "name": "Lac Lioson Loop",
+    "canton": "VD",
+    "region": "Pre-Alps",
+    "difficulty": "T2",
+    "min_alt_m": 1380,
+    "max_alt_m": 1850,
+    "lat": 46.382,
+    "lon": 7.123,
+    "length_km": 6.0
+  },
+  {
+    "name": "Cabane d'Anniviers",
+    "canton": "VS",
+    "region": "Alps",
+    "difficulty": "T3",
+    "min_alt_m": 1670,
+    "max_alt_m": 2310,
+    "lat": 46.13,
+    "lon": 7.625,
+    "length_km": 9.0
+  },
+  {
+    "name": "Cabane du Vélan",
+    "canton": "VS",
+    "region": "Alps",
+    "difficulty": "T4",
+    "min_alt_m": 1600,
+    "max_alt_m": 2642,
+    "lat": 45.945,
+    "lon": 7.225,
+    "length_km": 12.0
+  },
+  {
+    "name": "Grosse Scheidegg — Faulhorn",
+    "canton": "BE",
+    "region": "Alps",
+    "difficulty": "T2",
+    "min_alt_m": 1962,
+    "max_alt_m": 2681,
+    "lat": 46.658,
+    "lon": 8.105,
+    "length_km": 16.0
+  },
+  {
+    "name": "Pizzo Centrale (Gotthard)",
+    "canton": "UR",
+    "region": "Alps",
+    "difficulty": "T3",
+    "min_alt_m": 2106,
+    "max_alt_m": 2999,
+    "lat": 46.61,
+    "lon": 8.582,
+    "length_km": 8.0
+  },
+  {
+    "name": "Diavolezza — Munt Pers",
+    "canton": "GR",
+    "region": "Alps",
+    "difficulty": "T3",
+    "min_alt_m": 2978,
+    "max_alt_m": 3247,
+    "lat": 46.413,
+    "lon": 9.969,
+    "length_km": 4.5
+  },
+  {
+    "name": "Suvretta-Pass",
+    "canton": "GR",
+    "region": "Alps",
+    "difficulty": "T3",
+    "min_alt_m": 1820,
+    "max_alt_m": 2615,
+    "lat": 46.498,
+    "lon": 9.81,
+    "length_km": 14.0
+  },
+  {
+    "name": "Sentiero Soglio — Bondo",
+    "canton": "GR",
+    "region": "Alps",
+    "difficulty": "T2",
+    "min_alt_m": 825,
+    "max_alt_m": 1500,
+    "lat": 46.336,
+    "lon": 9.575,
+    "length_km": 9.0
+  },
+  {
+    "name": "Tomasee — Source of the Rhine",
+    "canton": "GR",
+    "region": "Alps",
+    "difficulty": "T2",
+    "min_alt_m": 1995,
+    "max_alt_m": 2345,
+    "lat": 46.604,
+    "lon": 8.703,
+    "length_km": 6.0
+  },
+  {
+    "name": "Höhenweg Hohgant",
+    "canton": "BE",
+    "region": "Pre-Alps",
+    "difficulty": "T3",
+    "min_alt_m": 1480,
+    "max_alt_m": 2197,
+    "lat": 46.792,
+    "lon": 7.965,
+    "length_km": 12.0
+  },
+  {
+    "name": "Wildkirchli — Aescher",
+    "canton": "AI",
+    "region": "Alps",
+    "difficulty": "T3",
+    "min_alt_m": 1470,
+    "max_alt_m": 1860,
+    "lat": 47.281,
+    "lon": 9.404,
+    "length_km": 5.0
+  },
+  {
+    "name": "Schwarzsee Loop (FR)",
+    "canton": "FR",
+    "region": "Pre-Alps",
+    "difficulty": "T1",
+    "min_alt_m": 1046,
+    "max_alt_m": 1110,
+    "lat": 46.675,
+    "lon": 7.279,
+    "length_km": 4.5
   }
 ]

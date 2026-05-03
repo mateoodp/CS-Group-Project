@@ -18,8 +18,12 @@ from utils.constants import (
     FEATURE_DISPLAY_NAMES,
 )
 from utils.sidebar import render_shared_sidebar
+from utils.topnav import render_top_nav
 
-st.set_page_config(page_title=f"About · {APP_TITLE}", page_icon="ℹ️", layout="wide")
+st.set_page_config(
+    page_title=f"About · {APP_TITLE}", page_icon="ℹ️", layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +220,7 @@ def render_attribution() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    render_top_nav()
     render_shared_sidebar()
     st.title("ℹ️ About this app")
     render_problem_statement()

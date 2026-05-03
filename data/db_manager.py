@@ -57,7 +57,7 @@ def get_connection() -> Iterator[sqlite3.Connection]:
 # Schema & bootstrap
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION: int = 2  # bump whenever the schema changes (auto-migrates)
+SCHEMA_VERSION: int = 3  # bump whenever the schema OR seed catalogue changes
 
 SCHEMA_SQL: str = """
 CREATE TABLE IF NOT EXISTS schema_meta (
