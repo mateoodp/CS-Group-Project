@@ -33,7 +33,9 @@ def _fetch_one(trail) -> bool:
     for attempt in range(MAX_RETRIES + 1):
         try:
             weather_fetcher.refresh_cache(
-                trail["id"], trail["lat"], trail["lon"],
+                trail["id"],
+                trail["lat"],
+                trail["lon"],
                 force=(attempt > 0),
             )
             return True
@@ -43,18 +45,23 @@ def _fetch_one(trail) -> bool:
     return False
 
 
-def trails_missing_today(trails) -> list[dict]:
-    today = date.today()
+def trails_missing_for_date(trails, target_date: date) -> list[dict]:
     return [
-        t for t in trails
-        if db_manager.get_weather_for_date(t["id"], today) is None
+        t
+        for t in trails
+        if db_manager.get_weather_for_date(t["id"], target_date) is None
     ]
+
+
+def trails_missing_today(trails) -> list[dict]:
+    return trails_missing_for_date(trails, date.today())
 
 
 def ensure_weather_cached(
     trails,
     *,
     page_key: str,
+    target_date: date | None = None,
     quiet: bool = False,
 ) -> tuple[int, int]:
     """Fetch missing forecasts for the given trails, in the background.
@@ -67,12 +74,12 @@ def ensure_weather_cached(
     even on first run — useful for very small trail sets where the
     fetch is essentially instant.
     """
-    today = date.today()
-    missing = trails_missing_today(trails)
+    target_date = target_date or date.today()
+    missing = trails_missing_for_date(trails, target_date)
     if not missing:
         return 0, 0
 
-    memo_key = f"_data_health_done__{page_key}__{today.isoformat()}"
+    memo_key = f"_data_health_done__{page_key}__{target_date.isoformat()}"
     if st.session_state.get(memo_key):
         # Already attempted in this session; surface failures count only.
         return 0, len(missing)

@@ -18,10 +18,13 @@ from utils.constants import (
     FEATURE_DISPLAY_NAMES,
 )
 from utils.sidebar import render_shared_sidebar
+from utils.theme import apply_app_theme, page_hero, section_heading, stat_pills_html
 from utils.topnav import render_top_nav
 
 st.set_page_config(
-    page_title=f"About · {APP_TITLE}", page_icon="ℹ️", layout="wide",
+    page_title=f"About · {APP_TITLE}",
+    page_icon="ℹ️",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
@@ -30,8 +33,16 @@ st.set_page_config(
 # Problem statement
 # ---------------------------------------------------------------------------
 
+
 def render_problem_statement() -> None:
-    st.header("Why this tool exists")
+    st.markdown(
+        section_heading(
+            "Why this tool exists",
+            "Raw mountain weather is useful, but hikers need a route-level go/no-go signal they can scan quickly.",
+            "Problem",
+        ),
+        unsafe_allow_html=True,
+    )
     st.markdown(
         """
         Swiss alpine accidents kill **~20 hikers per year** and injure hundreds
@@ -51,8 +62,16 @@ def render_problem_statement() -> None:
 # Pipeline
 # ---------------------------------------------------------------------------
 
+
 def render_ml_pipeline() -> None:
-    st.header("How the ML pipeline works")
+    st.markdown(
+        section_heading(
+            "How the ML pipeline works",
+            "Forecast data, route altitude and transparent rule labels feed the Random Forest model.",
+            "Pipeline",
+        ),
+        unsafe_allow_html=True,
+    )
     st.markdown(
         """
         | Step | What happens | Module |
@@ -74,22 +93,33 @@ def render_ml_pipeline() -> None:
 # Setup section
 # ---------------------------------------------------------------------------
 
+
 def render_setup_section() -> None:
-    st.header("Initial setup")
+    st.markdown(
+        section_heading(
+            "Initial setup",
+            "Seed historical weather and retrain the model when the local cache needs rebuilding.",
+            "Model operations",
+        ),
+        unsafe_allow_html=True,
+    )
     n_weather = len(db_manager.get_all_weather())
     has_model = trail_classifier.model_exists()
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Weather rows in DB", f"{n_weather:,}")
-    c2.metric("Trails seeded", f"{len(db_manager.get_all_trails())}")
-    c3.metric(
-        "Model file",
-        "✅ trained" if has_model else "❌ not yet",
+    st.markdown(
+        stat_pills_html(
+            [
+                ("weather rows in DB", f"{n_weather:,}"),
+                ("trails seeded", len(db_manager.get_all_trails())),
+                ("model file", "trained" if has_model else "not yet"),
+            ]
+        ),
+        unsafe_allow_html=True,
     )
 
     seed_col, train_col = st.columns(2)
     with seed_col:
         years = st.slider("Years of history to fetch", 1, 2, 1, key="seed_years")
-        if st.button("⬇️ Seed historical weather (all 20 trails)"):
+        if st.button("⬇️ Seed historical weather (all trails)", width="stretch"):
             trails = db_manager.get_all_trails()
             progress = st.progress(0.0, text="Fetching archive…")
             errors: list[str] = []
@@ -113,13 +143,15 @@ def render_setup_section() -> None:
                 st.success("Historical weather seeded for all trails.")
 
     with train_col:
-        if st.button("🧠 Retrain model", type="primary"):
+        if st.button("🧠 Retrain model", type="primary", width="stretch"):
             try:
                 with st.spinner("Training Random Forest…"):
                     metrics = trail_classifier.retrain_from_db()
                 st.session_state["last_metrics"] = metrics
-                st.success(f"Trained! Accuracy: {metrics['accuracy']:.1%} "
-                           f"on {metrics['n_samples']:,} rows.")
+                st.success(
+                    f"Trained! Accuracy: {metrics['accuracy']:.1%} "
+                    f"on {metrics['n_samples']:,} rows."
+                )
             except Exception as e:
                 st.error(f"Retrain failed: {e}")
 
@@ -128,8 +160,16 @@ def render_setup_section() -> None:
 # Metrics
 # ---------------------------------------------------------------------------
 
+
 def render_metrics() -> None:
-    st.header("Model performance")
+    st.markdown(
+        section_heading(
+            "Model performance",
+            "Training metrics appear after retraining from the current local database.",
+            "Evaluation",
+        ),
+        unsafe_allow_html=True,
+    )
     metrics = st.session_state.get("last_metrics")
 
     if metrics is None:
@@ -139,56 +179,77 @@ def render_metrics() -> None:
         )
         return
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Accuracy", f"{metrics['accuracy']:.1%}")
-    c2.metric("Rows trained", f"{metrics['n_samples']:,}")
-    c3.metric("Model version", metrics["model_version"])
+    st.markdown(
+        stat_pills_html(
+            [
+                ("accuracy", f"{metrics['accuracy']:.1%}"),
+                ("rows trained", f"{metrics['n_samples']:,}"),
+                ("model version", metrics["model_version"]),
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
     cm = metrics["confusion_matrix"]
     labels = list(trail_classifier.LABEL_TO_CODE.keys())
     fig = go.Figure(
         data=go.Heatmap(
-            z=cm, x=labels, y=labels,
+            z=cm,
+            x=labels,
+            y=labels,
             colorscale="Greens",
-            text=cm, texttemplate="%{text}",
+            text=cm,
+            texttemplate="%{text}",
             colorbar=dict(title="Count"),
         )
     )
     fig.update_layout(
         title="Confusion matrix",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         height=380,
         xaxis_title="Predicted",
         yaxis_title="Actual",
         margin=dict(l=10, r=10, t=40, b=10),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     st.subheader("Classification report")
     rep = pd.DataFrame(metrics["classification_report"]).T
-    st.dataframe(rep.round(3), use_container_width=True)
+    st.dataframe(rep.round(3), width="stretch")
 
     st.subheader("Feature importance")
     imp_df = pd.DataFrame(
         metrics["feature_importances"], columns=["Feature", "Importance"]
     )
-    imp_df["Feature"] = imp_df["Feature"].map(
-        lambda f: FEATURE_DISPLAY_NAMES.get(f, f)
-    )
+    imp_df["Feature"] = imp_df["Feature"].map(lambda f: FEATURE_DISPLAY_NAMES.get(f, f))
     imp_df = imp_df.sort_values("Importance")
     fig2 = px.bar(
-        imp_df, x="Importance", y="Feature", orientation="h",
-        color="Importance", color_continuous_scale="Greens",
+        imp_df,
+        x="Importance",
+        y="Feature",
+        orientation="h",
+        color="Importance",
+        color_continuous_scale="Greens",
     )
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10))
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 
 # ---------------------------------------------------------------------------
 # Contribution matrix
 # ---------------------------------------------------------------------------
 
+
 def render_contribution_matrix() -> None:
-    st.header("Contribution matrix")
+    st.markdown(
+        section_heading(
+            "Contribution matrix",
+            "A compact view of project ownership across the implemented system.",
+            "Team",
+        ),
+        unsafe_allow_html=True,
+    )
     df = pd.DataFrame(CONTRIBUTION_MATRIX)
     palette = {"L": "#1E7B3A", "M": "#52A370", "S": "#A8D5B7", "—": "#FFFFFF"}
 
@@ -196,7 +257,7 @@ def render_contribution_matrix() -> None:
         return f"background-color:{palette.get(val, '#FFFFFF')}; color:black;"
 
     styled = df.style.map(colour, subset=["TM1", "TM2", "TM3", "TM4", "TM5"])
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.dataframe(styled, width="stretch", hide_index=True)
     st.caption("Legend: **L** = Lead · **M** = Major · **S** = Support · — = None.")
 
 
@@ -204,8 +265,16 @@ def render_contribution_matrix() -> None:
 # Attribution
 # ---------------------------------------------------------------------------
 
+
 def render_attribution() -> None:
-    st.header("Data sources")
+    st.markdown(
+        section_heading(
+            "Data sources",
+            "Free public APIs and local seeded data power the app.",
+            "Attribution",
+        ),
+        unsafe_allow_html=True,
+    )
     st.markdown(
         """
         - **Open-Meteo Forecast** · `api.open-meteo.com/v1/forecast` — free, no key.
@@ -219,10 +288,19 @@ def render_attribution() -> None:
 # Page entry
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
-    st.title("ℹ️ About this app")
+    apply_app_theme()
+    st.markdown(
+        page_hero(
+            "About this app",
+            "Swiss Alpine Hiking Condition Forecaster combines trail catalogue data, weather caches and a trained model into route-level condition guidance.",
+            "Project and model",
+        ),
+        unsafe_allow_html=True,
+    )
     render_problem_statement()
     st.divider()
     render_ml_pipeline()

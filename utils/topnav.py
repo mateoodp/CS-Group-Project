@@ -33,40 +33,36 @@ _NAV_CSS: str = """
   header[data-testid="stHeader"] { display: none; }
   [data-testid="stToolbar"] { display: none; }
 
-  /* Reduce the top padding so the nav row sits flush with the window. */
-  .block-container { padding-top: 1.5rem; }
-
-  /* Style the horizontal nav row. */
-  .top-nav {
-    display: flex;
-    gap: 6px;
-    padding: 6px 8px;
-    background: #f5f6f8;
-    border-radius: 12px;
-    margin-bottom: 18px;
-    border: 1px solid #e6e8eb;
+  .block-container {
+    padding-top: 1.1rem;
   }
-  .top-nav-brand {
-    font-weight: 700;
-    color: #1a1a1a;
-    padding: 6px 14px 6px 6px;
-    border-right: 1px solid #e0e2e5;
-    margin-right: 6px;
-    align-self: center;
+
+  .nav-brand {
+    color: #14201c;
+    font-weight: 850;
+    font-size: 1.05rem;
+    letter-spacing: 0;
+    padding: .55rem 0 .25rem;
     white-space: nowrap;
   }
 
-  /* Streamlit page links inside the nav: pill-style. */
-  .top-nav [data-testid="stPageLink"] a {
-    padding: 8px 16px;
-    border-radius: 8px;
-    color: #4a4a4a;
+  div[data-testid="stPageLink"] a {
+    min-height: 2.55rem;
+    border-radius: 999px;
+    color: #31443c;
     text-decoration: none;
-    font-weight: 500;
+    font-weight: 750;
   }
-  .top-nav [data-testid="stPageLink"] a:hover {
+
+  div[data-testid="stPageLink"] a:hover {
     background: #ffffff;
-    color: #1a1a1a;
+    color: #173f35;
+  }
+
+  .nav-rule {
+    margin: .55rem 0 1.4rem;
+    border: 0;
+    border-top: 1px solid #e4e8e4;
   }
 </style>
 """
@@ -76,10 +72,10 @@ _NAV_CSS: str = """
 # the file paths under pages/ — this list drives both the rendered links
 # and any "back to {section}" buttons inside the Trail Detail page.
 NAV_ENTRIES: list[tuple[str, str, str]] = [
-    ("pages/1_Find.py",    "Find a hike", "🧭"),
-    ("pages/2_Map.py",     "Map",         "🗺️"),
-    ("pages/3_Compare.py", "Compare",     "🔀"),
-    ("pages/4_About.py",   "About",       "ℹ️"),
+    ("pages/1_Find.py", "Find a hike", "🧭"),
+    ("pages/2_Map.py", "Map", "🗺️"),
+    ("pages/3_Compare.py", "Compare", "🔀"),
+    ("pages/4_About.py", "About", "ℹ️"),
 ]
 
 
@@ -90,14 +86,10 @@ def render_top_nav() -> None:
     cols = st.columns([2] + [1] * len(NAV_ENTRIES), gap="small")
     with cols[0]:
         st.markdown(
-            "<div style='font-weight:700; font-size:1.1rem; "
-            "padding-top:6px;'>🏔️ Swiss Hike Forecaster</div>",
+            "<div class='nav-brand'>Swiss Hike Forecaster</div>",
             unsafe_allow_html=True,
         )
     for col, (path, label, icon) in zip(cols[1:], NAV_ENTRIES):
         with col:
-            st.page_link(path, label=label, icon=icon, use_container_width=True)
-    st.markdown(
-        "<hr style='margin:8px 0 18px; border:0; border-top:1px solid #e6e8eb;'>",
-        unsafe_allow_html=True,
-    )
+            st.page_link(path, label=label, icon=icon, width="stretch")
+    st.markdown("<hr class='nav-rule'>", unsafe_allow_html=True)
