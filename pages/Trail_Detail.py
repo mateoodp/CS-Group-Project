@@ -595,6 +595,58 @@ def tab_photos(trail) -> None:
 # Bottom-of-page user report form
 # ---------------------------------------------------------------------------
 
+def render_history_chart(trail) -> None:
+    """Compact 30-day SAFE/BORDERLINE/AVOID strip for the selected trail."""
+    st.divider()
+    st.subheader("Conditions history — last 30 days")
+
+    today = date.today()
+    start = today - timedelta(days=29)
+    rows = db_manager.get_weather_history_range(trail["id"], start, today)
+
+    if not rows:
+        st.info(
+            "No historical data for this trail. "
+            "Seed weather from the **About** tab."
+        )
+        return
+
+    colour_map = {"SAFE": "#1E7B3A", "BORDERLINE": "#E69F00", "AVOID": "#C0392B"}
+    dates: list = []
+    colours: list[str] = []
+    verdicts: list[str] = []
+    for row in rows:
+        v, _, _, _ = predictions.predict_for_snapshot(row, trail["max_alt_m"])
+        dates.append(row["snapshot_date"])
+        colours.append(colour_map.get(v, "#AAAAAA"))
+        verdicts.append(v)
+
+    fig = go.Figure(
+        go.Bar(
+            x=dates,
+            y=[1] * len(dates),
+            marker_color=colours,
+            text=verdicts,
+            textposition="none",
+            hovertemplate="%{x}: %{text}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=140,
+        margin=dict(l=10, r=10, t=10, b=10),
+        yaxis=dict(visible=False, range=[0, 1.2]),
+        xaxis=dict(title=""),
+        showlegend=False,
+        bargap=0.05,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    c1, c2, c3 = st.columns(3)
+    c1.markdown("🟢 **SAFE**")
+    c2.markdown("🟠 **BORDERLINE**")
+    c3.markdown("🔴 **AVOID**")
+
+
 def render_report_form(trail) -> None:
     st.divider()
     st.subheader(f"📝 Hiked {trail['name']}? Submit a report")
@@ -703,6 +755,7 @@ def main() -> None:
     with photos:
         tab_photos(trail)
 
+    render_history_chart(trail)
     render_report_form(trail)
 
 

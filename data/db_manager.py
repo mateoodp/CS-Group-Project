@@ -349,6 +349,22 @@ def get_weather_history(trail_id: int, days: int = 730) -> list[sqlite3.Row]:
         ).fetchall()[::-1]
 
 
+def get_weather_history_range(trail_id: int, start_date, end_date) -> list[dict]:
+    """Return weather snapshots between two dates (inclusive), oldest first."""
+    start_iso = start_date.isoformat() if hasattr(start_date, "isoformat") else start_date
+    end_iso = end_date.isoformat() if hasattr(end_date, "isoformat") else end_date
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM weather_snapshots
+            WHERE trail_id = ? AND snapshot_date BETWEEN ? AND ?
+            ORDER BY snapshot_date ASC;
+            """,
+            (trail_id, start_iso, end_iso),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_all_weather() -> list[sqlite3.Row]:
     """Return every weather snapshot joined with its trail's max altitude."""
     with get_connection() as conn:
