@@ -134,8 +134,8 @@ def render_metrics() -> None:
 
     if metrics is None:
         st.info(
-            "No metrics yet. Run the **Retrain model** button above to train "
-            "the Random Forest and populate this section."
+            "Metrics will appear here after the first retrain. "
+            "Click **Retrain model** above."
         )
         return
 

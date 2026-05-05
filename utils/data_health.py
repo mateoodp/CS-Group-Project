@@ -45,10 +45,8 @@ def _fetch_one(trail) -> bool:
 
 def trails_missing_today(trails) -> list[dict]:
     today = date.today()
-    return [
-        t for t in trails
-        if db_manager.get_weather_for_date(t["id"], today) is None
-    ]
+    have = db_manager.get_all_snapshots_for_date(today)
+    return [t for t in trails if t["id"] not in have]
 
 
 def ensure_weather_cached(

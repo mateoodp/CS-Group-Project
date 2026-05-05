@@ -38,6 +38,9 @@ hiking_app.db-journal
 hiking_app.db-wal
 hiking_app.db-shm
 
+# Build artefact: written by ml.trail_classifier.retrain_from_db()
+ml/last_metrics.json
+
 # Local caches
 .cache/
 *.log

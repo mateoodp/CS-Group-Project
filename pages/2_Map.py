@@ -45,6 +45,15 @@ _FOLIUM_COLOUR_MAP = {
     "SAFE": "green", "BORDERLINE": "orange", "AVOID": "red", "—": "gray",
 }
 
+# Hex versions used by the drill-down DivIcon badges.
+_HEX_MAP = {
+    "SAFE": "#1E7B3A",
+    "BORDERLINE": "#E69F00",
+    "AVOID": "#C0392B",
+    "—": "#888888",
+}
+_LETTER_MAP = {"SAFE": "S", "BORDERLINE": "B", "AVOID": "A", "—": "·"}
+
 
 # ---------------------------------------------------------------------------
 # Date control
@@ -74,7 +83,7 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
     fmap = folium.Map(
         location=[CH_CENTRE_LAT, CH_CENTRE_LON],
         zoom_start=DEFAULT_MAP_ZOOM,
-        tiles="OpenStreetMap",
+        tiles="CartoDB.Positron",
     )
 
     for code, d in sorted(canton_data.items()):
@@ -105,11 +114,12 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
             tooltip=code,   # used to capture click → drill-down
         ).add_to(fmap)
 
-    out = st_folium(
-        fmap, width=None, height=560,
-        returned_objects=["last_object_clicked_tooltip"],
-        key="canton_overview_map",
-    )
+    with st.spinner("Loading trail map…"):
+        out = st_folium(
+            fmap, width=None, height=560,
+            returned_objects=["last_object_clicked_tooltip"],
+            key="canton_overview_map",
+        )
     return (out or {}).get("last_object_clicked_tooltip")
 
 
@@ -159,18 +169,6 @@ def render_summary_metrics(canton_data: dict[str, dict]) -> None:
 # Drill-down view (trails of a single canton)
 # ---------------------------------------------------------------------------
 
-def _verdict_for_trail(trail, target_date: date) -> tuple[str, float]:
-    """Cache lookup → (verdict, confidence)."""
-    from utils import predictions  # local to avoid pandas import on cold load
-    snap = db_manager.get_weather_for_date(trail["id"], target_date)
-    if snap is None:
-        return "—", 0.0
-    snap_dict = dict(snap)
-    v, c, _, _ = predictions.predict_for_snapshot(snap_dict, trail["max_alt_m"])
-    floored, _ = predictions.apply_difficulty_floor(v, trail, snap_dict)
-    return floored, float(c)
-
-
 def render_canton_drilldown_map(
     trails, canton_code: str, target_date: date
 ) -> str | None:
@@ -178,6 +176,8 @@ def render_canton_drilldown_map(
     if not trails:
         st.info(f"No trails recorded for {canton_label(canton_code)}.")
         return None
+
+    from utils import predictions  # local to avoid pandas import on cold load
 
     lats = [t["lat"] for t in trails]
     lons = [t["lon"] for t in trails]
@@ -187,16 +187,22 @@ def render_canton_drilldown_map(
     fmap = folium.Map(
         location=[centre_lat, centre_lon],
         zoom_start=10,
-        tiles="OpenStreetMap",
+        tiles="CartoDB.Positron",
     )
     fmap.fit_bounds([
         [min(lats) - 0.05, min(lons) - 0.05],
         [max(lats) + 0.05, max(lons) + 0.05],
     ])
 
+    trail_ids = tuple(sorted(t["id"] for t in trails))
+    verdicts = predictions.get_verdicts_for_date(
+        target_date.isoformat(), trail_ids
+    )
+
     for t in trails:
-        verdict, conf = _verdict_for_trail(t, target_date)
-        colour = _FOLIUM_COLOUR_MAP.get(verdict, "gray")
+        v_dict = verdicts.get(t["id"], {})
+        verdict = v_dict.get("verdict", "—")
+        conf = v_dict.get("confidence", 0.0)
         popup_html = (
             f"<b>{t['name']}</b><br>"
             f"{t['canton']} · {t['difficulty']} · {t['length_km']} km<br>"
@@ -205,19 +211,41 @@ def render_canton_drilldown_map(
             f"{f' · {conf:.0%}' if conf else ''}<br>"
             f"<i>Pick from the dropdown below to open the full trail page.</i>"
         )
-        folium.CircleMarker(
+        hex_colour = _HEX_MAP.get(verdict, "#888888")
+        letter = _LETTER_MAP.get(verdict, "·")
+        icon_html = (
+            f"<div style='"
+            f"background:{hex_colour};"
+            f"color:white;"
+            f"border-radius:50%;"
+            f"width:22px;height:22px;"
+            f"display:flex;align-items:center;justify-content:center;"
+            f"font-size:11px;font-weight:700;"
+            f"border:2px solid rgba(255,255,255,0.6);"
+            f"box-shadow:0 1px 3px rgba(0,0,0,0.4);"
+            f"'>{letter}</div>"
+        )
+        folium.Marker(
             location=[t["lat"], t["lon"]],
-            radius=8,
-            color=colour, weight=1.5,
-            fill=True, fill_color=colour, fill_opacity=0.85,
             popup=folium.Popup(popup_html, max_width=260),
             tooltip=t["name"],
+            icon=folium.DivIcon(
+                html=icon_html,
+                icon_size=(22, 22),
+                icon_anchor=(11, 11),
+            ),
         ).add_to(fmap)
 
-    out = st_folium(
-        fmap, width=None, height=560,
-        returned_objects=["last_object_clicked_tooltip"],
-        key=f"drilldown_map_{canton_code}",
+    with st.spinner("Loading trail map…"):
+        out = st_folium(
+            fmap, width=None, height=560,
+            returned_objects=["last_object_clicked_tooltip"],
+            key=f"drilldown_map_{canton_code}",
+        )
+    st.caption(
+        f"Showing **{len(trails)}** trail(s). "
+        "Grey markers = no cached weather. "
+        "Click a marker to select that trail."
     )
     return (out or {}).get("last_object_clicked_tooltip")
 

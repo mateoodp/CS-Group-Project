@@ -214,6 +214,65 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
 
     st.caption(f"Verdict source: **{source}** · Confidence: **{conf:.0%}**")
 
+    st.divider()
+    _render_overview_cards(trail, verdict, conf, source)
+
+
+def _render_overview_cards(trail, verdict, conf, source) -> None:
+    """3-card summary: model verdict (with risk-adjusted overlay), today's
+    weather, trail stats. Sits below the at-a-glance section."""
+    st.markdown(f"## {trail['name']}")
+    st.caption(
+        f"{trail['canton']} · {trail['region']} · "
+        f"Difficulty {trail['difficulty']}"
+    )
+
+    risk = st.session_state.get("risk_tolerance", 3)
+    adjusted = (
+        predictions.apply_risk_tolerance(verdict, risk)
+        if verdict in {"SAFE", "BORDERLINE", "AVOID"}
+        else verdict
+    )
+    snap = db_manager.get_weather_for_date(trail["id"], date.today())
+
+    col_v, col_w, col_t = st.columns(3)
+
+    with col_v.container(border=True):
+        st.markdown("**Model verdict**")
+        colour = VERDICT_COLOURS.get(verdict, "#888")
+        st.markdown(
+            f"<span style='font-size:2rem; font-weight:700; color:{colour};'>"
+            f"{VERDICT_EMOJI.get(verdict, '—')} {verdict}</span>",
+            unsafe_allow_html=True,
+        )
+        st.caption(f"{source} · {conf:.0%} confidence")
+        if adjusted != verdict:
+            adj_colour = VERDICT_COLOURS.get(adjusted, "#888")
+            st.markdown(
+                f"<span style='color:{adj_colour}; font-size:0.9rem;'>"
+                f"Adjusted: **{adjusted}**</span> (risk {risk}/5)",
+                unsafe_allow_html=True,
+            )
+
+    with col_w.container(border=True):
+        st.markdown("**Today's weather**")
+        if snap:
+            st.metric("Temperature", f"{snap['temp_c']:.0f} °C")
+            st.metric("Wind", f"{snap['wind_kmh']:.0f} km/h")
+            st.metric("Precipitation", f"{snap['precip_mm']:.1f} mm")
+            st.metric(
+                "Snowline",
+                f"{int(snap['snowline_m'])} m" if snap['snowline_m'] else "—",
+            )
+        else:
+            st.info("No weather snapshot for today.")
+
+    with col_t.container(border=True):
+        st.markdown("**Trail stats**")
+        st.metric("Length", f"{trail['length_km']} km")
+        st.metric("Max altitude", f"{trail['max_alt_m']} m")
+        st.metric("Min altitude", f"{trail['min_alt_m']} m")
+
 
 def tab_route(trail, snapshot) -> None:
     st.subheader("🗺️ Route on the map")
@@ -595,6 +654,81 @@ def tab_photos(trail) -> None:
 # Bottom-of-page user report form
 # ---------------------------------------------------------------------------
 
+def render_community_consensus(trail) -> None:
+    """Per-trail SAFE/BORDERLINE/AVOID counts from user reports (last 30d).
+
+    Hidden entirely when the trail has zero reports — keeps the page tidy
+    for the long tail of routes with no community input yet.
+    """
+    dist = db_manager.get_report_distribution(trail["id"], days=30)
+    total = sum(dist.values())
+    if total == 0:
+        return
+
+    st.markdown("**Community reports — last 30 days**")
+    cols = st.columns(3)
+    for i, label in enumerate(["SAFE", "BORDERLINE", "AVOID"]):
+        count = dist.get(label, 0)
+        pct = count / total if total else 0
+        cols[i].metric(
+            label,
+            f"{count} report{'s' if count != 1 else ''}",
+            f"{pct:.0%} of {total}",
+        )
+
+
+def render_history_chart(trail) -> None:
+    """Compact 30-day SAFE/BORDERLINE/AVOID strip for the selected trail."""
+    st.divider()
+    st.subheader("Conditions history — last 30 days")
+
+    today = date.today()
+    start = today - timedelta(days=29)
+    rows = db_manager.get_weather_history_range(trail["id"], start, today)
+
+    if not rows:
+        st.info(
+            "No historical data for this trail. "
+            "Seed weather from the **About** tab."
+        )
+        return
+
+    colour_map = {"SAFE": "#1E7B3A", "BORDERLINE": "#E69F00", "AVOID": "#C0392B"}
+    dates: list = []
+    colours: list[str] = []
+    verdicts: list[str] = []
+    for row in rows:
+        v, _, _, _ = predictions.predict_for_snapshot(row, trail["max_alt_m"])
+        dates.append(row["snapshot_date"])
+        colours.append(colour_map.get(v, "#AAAAAA"))
+        verdicts.append(v)
+
+    fig = go.Figure(
+        go.Bar(
+            x=dates,
+            y=[1] * len(dates),
+            marker_color=colours,
+            text=verdicts,
+            textposition="none",
+            hovertemplate="%{x}: %{text}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=140,
+        margin=dict(l=10, r=10, t=10, b=10),
+        yaxis=dict(visible=False, range=[0, 1.2]),
+        xaxis=dict(title=""),
+        showlegend=False,
+        bargap=0.05,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    c1, c2, c3 = st.columns(3)
+    c1.markdown("🟢 **SAFE**")
+    c2.markdown("🟠 **BORDERLINE**")
+    c3.markdown("🔴 **AVOID**")
+
+
 def render_report_form(trail) -> None:
     st.divider()
     st.subheader(f"📝 Hiked {trail['name']}? Submit a report")
@@ -703,6 +837,8 @@ def main() -> None:
     with photos:
         tab_photos(trail)
 
+    render_history_chart(trail)
+    render_community_consensus(trail)
     render_report_form(trail)
 
 

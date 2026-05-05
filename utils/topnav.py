@@ -76,10 +76,11 @@ _NAV_CSS: str = """
 # the file paths under pages/ — this list drives both the rendered links
 # and any "back to {section}" buttons inside the Trail Detail page.
 NAV_ENTRIES: list[tuple[str, str, str]] = [
-    ("pages/1_Find.py",    "Find a hike", "🧭"),
-    ("pages/2_Map.py",     "Map",         "🗺️"),
-    ("pages/3_Compare.py", "Compare",     "🔀"),
-    ("pages/4_About.py",   "About",       "ℹ️"),
+    ("pages/1_Find.py",     "Find a hike", "🧭"),
+    ("pages/2_Map.py",      "Map",         "🗺️"),
+    ("pages/3_Compare.py",  "Compare",     "🔀"),
+    ("pages/5_Planner.py",  "Planner",     "🗓️"),
+    ("pages/4_About.py",    "About",       "ℹ️"),
 ]
 
 

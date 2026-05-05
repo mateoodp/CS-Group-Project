@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -349,6 +349,22 @@ def get_weather_history(trail_id: int, days: int = 730) -> list[sqlite3.Row]:
         ).fetchall()[::-1]
 
 
+def get_weather_history_range(trail_id: int, start_date, end_date) -> list[dict]:
+    """Return weather snapshots between two dates (inclusive), oldest first."""
+    start_iso = start_date.isoformat() if hasattr(start_date, "isoformat") else start_date
+    end_iso = end_date.isoformat() if hasattr(end_date, "isoformat") else end_date
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM weather_snapshots
+            WHERE trail_id = ? AND snapshot_date BETWEEN ? AND ?
+            ORDER BY snapshot_date ASC;
+            """,
+            (trail_id, start_iso, end_iso),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_all_weather() -> list[sqlite3.Row]:
     """Return every weather snapshot joined with its trail's max altitude."""
     with get_connection() as conn:
@@ -371,6 +387,32 @@ def get_weather_for_date(
             "SELECT * FROM weather_snapshots WHERE trail_id = ? AND snapshot_date = ?;",
             (trail_id, snapshot_date.isoformat() if isinstance(snapshot_date, date) else snapshot_date),
         ).fetchone()
+
+
+def get_all_snapshots_for_date(snapshot_date) -> dict[int, dict]:
+    """Return ``{trail_id: snapshot_row}`` for every trail on a given date.
+
+    Single JOIN — replaces per-trail :func:`get_weather_for_date` loops on
+    pages that need verdicts for many trails at once. Each value is a plain
+    dict including the trail's ``max_alt_m`` so callers don't need a
+    second query to compute the snowline-delta feature.
+    """
+    iso = (
+        snapshot_date.isoformat()
+        if hasattr(snapshot_date, "isoformat")
+        else snapshot_date
+    )
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT ws.*, t.max_alt_m
+            FROM weather_snapshots ws
+            JOIN trails t ON t.id = ws.trail_id
+            WHERE ws.snapshot_date = ?;
+            """,
+            (iso,),
+        ).fetchall()
+    return {r["trail_id"]: dict(r) for r in rows}
 
 
 def get_latest_snapshot_age_hours(trail_id: int) -> Optional[float]:
@@ -440,6 +482,22 @@ def get_recent_user_reports(limit: int = 20) -> list[sqlite3.Row]:
             """,
             (limit,),
         ).fetchall()
+
+
+def get_report_distribution(trail_id: int, days: int = 30) -> dict[str, int]:
+    """Count user reports by label for a trail over the past ``days`` days."""
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT user_label, COUNT(*) AS cnt
+            FROM user_reports
+            WHERE trail_id = ? AND report_date >= ?
+            GROUP BY user_label;
+            """,
+            (trail_id, cutoff),
+        ).fetchall()
+    return {r["user_label"]: r["cnt"] for r in rows}
 
 
 def get_all_user_reports() -> list[sqlite3.Row]:

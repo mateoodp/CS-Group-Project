@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import date
 
-from data import db_manager
 from utils import predictions
 
 # ---------------------------------------------------------------------------
@@ -49,17 +48,6 @@ _SCORE = {"SAFE": 1, "BORDERLINE": 2, "AVOID": 3}
 _BAND_TO_VERDICT = {1: "SAFE", 2: "BORDERLINE", 3: "AVOID"}
 
 
-def _trail_verdict_score(trail, target_date: date) -> int | None:
-    """Predicted (difficulty-floored) verdict score for one trail."""
-    snap_row = db_manager.get_weather_for_date(trail["id"], target_date)
-    if snap_row is None:
-        return None
-    snap = dict(snap_row)
-    v, _, _, _ = predictions.predict_for_snapshot(snap, trail["max_alt_m"])
-    floored, _ = predictions.apply_difficulty_floor(v, trail, snap)
-    return _SCORE[floored]
-
-
 def aggregate_by_canton(trails, target_date: date) -> dict[str, dict]:
     """Group trails by canton, compute average verdict + centroid + count.
 
@@ -68,7 +56,16 @@ def aggregate_by_canton(trails, target_date: date) -> dict[str, dict]:
     SAFE/BORDERLINE/AVOID derived from ``avg_score`` (≤1.5 → SAFE,
     ≤2.5 → BORDERLINE, else AVOID), or ``"—"`` if no data was cached
     for any of the canton's trails.
+
+    Verdicts come from :func:`predictions.get_verdicts_for_date`, which
+    issues one batch query and caches for 1h — so this function makes
+    O(1) DB roundtrips regardless of trail count.
     """
+    trail_ids = tuple(sorted(t["id"] for t in trails))
+    verdicts = predictions.get_verdicts_for_date(
+        target_date.isoformat(), trail_ids
+    )
+
     buckets: dict[str, dict] = {}
     for t in trails:
         b = buckets.setdefault(t["canton"], {
@@ -77,7 +74,8 @@ def aggregate_by_canton(trails, target_date: date) -> dict[str, dict]:
         b["trails"].append(t)
         b["lats"].append(t["lat"])
         b["lons"].append(t["lon"])
-        b["scores"].append(_trail_verdict_score(t, target_date))
+        v = verdicts.get(t["id"], {}).get("verdict", "—")
+        b["scores"].append(_SCORE.get(v))
 
     out: dict[str, dict] = {}
     for code, b in buckets.items():

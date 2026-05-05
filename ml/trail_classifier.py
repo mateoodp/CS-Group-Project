@@ -21,6 +21,7 @@ beginner-friendly to defend in the Q&A.
 
 from __future__ import annotations
 
+import json
 import pickle
 from pathlib import Path
 from typing import Optional
@@ -38,6 +39,7 @@ from sklearn.model_selection import train_test_split
 from data import db_manager, label_engine
 
 MODEL_PATH: Path = Path(__file__).resolve().parent / "model.pkl"
+METRICS_PATH: Path = Path(__file__).resolve().parent / "last_metrics.json"
 MODEL_VERSION: str = "0.1.0-dev"
 
 # Feature order MUST be stable — changing it invalidates the saved model.
@@ -256,11 +258,34 @@ def _load_training_frame() -> pd.DataFrame:
     return df
 
 
+def _persist_metrics(metrics: dict) -> None:
+    """Write ``metrics`` to :data:`METRICS_PATH` as JSON, normalising numpy types.
+
+    The About page reads this on cold start so the metrics section is
+    populated without forcing every fresh app load to retrain.
+    ``classification_report`` from sklearn nests both per-class dicts and
+    a top-level ``accuracy`` scalar — both branches are handled here.
+    """
+    safe: dict = {
+        k: (v.tolist() if hasattr(v, "tolist") else v)
+        for k, v in metrics.items()
+        if k != "classification_report"
+    }
+    safe["classification_report"] = {
+        cls: ({m: float(v) for m, v in vals.items()}
+              if isinstance(vals, dict) else float(vals))
+        for cls, vals in metrics["classification_report"].items()
+    }
+    METRICS_PATH.write_text(json.dumps(safe, indent=2))
+
+
 def retrain_from_db() -> dict:
     """Full retrain using the current ``weather_snapshots`` + ``user_reports``."""
     df = _load_training_frame()
     df = engineer_features(df)
-    return train_model(df, label_col="label")
+    metrics = train_model(df, label_col="label")
+    _persist_metrics(metrics)
+    return metrics
 
 
 # ---------------------------------------------------------------------------
