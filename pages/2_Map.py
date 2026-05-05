@@ -159,18 +159,6 @@ def render_summary_metrics(canton_data: dict[str, dict]) -> None:
 # Drill-down view (trails of a single canton)
 # ---------------------------------------------------------------------------
 
-def _verdict_for_trail(trail, target_date: date) -> tuple[str, float]:
-    """Cache lookup → (verdict, confidence)."""
-    from utils import predictions  # local to avoid pandas import on cold load
-    snap = db_manager.get_weather_for_date(trail["id"], target_date)
-    if snap is None:
-        return "—", 0.0
-    snap_dict = dict(snap)
-    v, c, _, _ = predictions.predict_for_snapshot(snap_dict, trail["max_alt_m"])
-    floored, _ = predictions.apply_difficulty_floor(v, trail, snap_dict)
-    return floored, float(c)
-
-
 def render_canton_drilldown_map(
     trails, canton_code: str, target_date: date
 ) -> str | None:
@@ -178,6 +166,8 @@ def render_canton_drilldown_map(
     if not trails:
         st.info(f"No trails recorded for {canton_label(canton_code)}.")
         return None
+
+    from utils import predictions  # local to avoid pandas import on cold load
 
     lats = [t["lat"] for t in trails]
     lons = [t["lon"] for t in trails]
@@ -194,8 +184,15 @@ def render_canton_drilldown_map(
         [max(lats) + 0.05, max(lons) + 0.05],
     ])
 
+    trail_ids = tuple(sorted(t["id"] for t in trails))
+    verdicts = predictions.get_verdicts_for_date(
+        target_date.isoformat(), trail_ids
+    )
+
     for t in trails:
-        verdict, conf = _verdict_for_trail(t, target_date)
+        v_dict = verdicts.get(t["id"], {})
+        verdict = v_dict.get("verdict", "—")
+        conf = v_dict.get("confidence", 0.0)
         colour = _FOLIUM_COLOUR_MAP.get(verdict, "gray")
         popup_html = (
             f"<b>{t['name']}</b><br>"

@@ -12,6 +12,7 @@ from datetime import date
 from typing import Optional
 
 import pandas as pd
+import streamlit as st
 
 from data import db_manager, label_engine, weather_fetcher
 from ml import trail_classifier
@@ -206,6 +207,84 @@ def adjust_verdict(
 
 def verdict_colour(verdict: str) -> str:
     return VERDICT_COLOURS.get(verdict, "#888888")
+
+
+@st.cache_data(ttl=3600)
+def get_verdicts_for_date(
+    snapshot_date_iso: str, trail_ids: tuple[int, ...]
+) -> dict[int, dict]:
+    """Difficulty-floored verdicts for many trails on one date — batched + cached.
+
+    One JOIN query for snapshots, one query for trail metadata, one model
+    load, one vectorised :func:`trail_classifier.predict_batch` call. Cached
+    for 1h on ``(date, sorted trail-id tuple)`` so sidebar filter changes
+    inside the TTL window hit the cache and the page renders instantly.
+
+    ``precip_7day_rolling`` is approximated as today's precipitation —
+    matching the same approximation :func:`_features_from_snapshot` uses
+    for single-day forecasts, so batched results equal the per-row path
+    exactly. If the model isn't trained yet, every row falls through to
+    :func:`predict_for_snapshot`'s rule-based engine.
+
+    Each value: ``{"verdict", "confidence", "snapshot", "trail"}``. Trails
+    without a cached snapshot get verdict ``"—"`` and ``snapshot=None`` —
+    callers preserve the grey-marker fallback.
+    """
+    snapshot_date = date.fromisoformat(snapshot_date_iso)
+    snapshots = db_manager.get_all_snapshots_for_date(snapshot_date)
+    trail_meta = {t["id"]: dict(t) for t in db_manager.get_all_trails()}
+
+    out: dict[int, dict] = {}
+    feature_rows: list[dict] = []
+    feature_tids: list[int] = []
+    for tid in trail_ids:
+        trail = trail_meta.get(tid)
+        if trail is None:
+            continue
+        snap = snapshots.get(tid)
+        if snap is None:
+            out[tid] = {
+                "verdict": "—",
+                "confidence": 0.0,
+                "snapshot": None,
+                "trail": trail,
+            }
+            continue
+        feats = _features_from_snapshot(snap, trail["max_alt_m"])
+        feats["trail_id"] = tid
+        feature_rows.append(feats)
+        feature_tids.append(tid)
+
+    if feature_rows and trail_classifier.model_exists():
+        try:
+            df = pd.DataFrame(feature_rows)
+            scored = trail_classifier.predict_batch(df)
+            for tid, row in zip(feature_tids, scored.itertuples(index=False)):
+                trail = trail_meta[tid]
+                snap = snapshots[tid]
+                floored, _ = apply_difficulty_floor(row.verdict, trail, snap)
+                out[tid] = {
+                    "verdict": floored,
+                    "confidence": float(row.confidence),
+                    "snapshot": snap,
+                    "trail": trail,
+                }
+            return out
+        except Exception:
+            pass  # fall through to per-row rules path
+
+    for tid in feature_tids:
+        trail = trail_meta[tid]
+        snap = snapshots[tid]
+        v, c, _, _ = predict_for_snapshot(snap, trail["max_alt_m"])
+        floored, _ = apply_difficulty_floor(v, trail, snap)
+        out[tid] = {
+            "verdict": floored,
+            "confidence": float(c),
+            "snapshot": snap,
+            "trail": trail,
+        }
+    return out
 
 
 def get_seven_day_forecast(trail_id: int) -> pd.DataFrame:

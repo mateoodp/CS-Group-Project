@@ -373,6 +373,32 @@ def get_weather_for_date(
         ).fetchone()
 
 
+def get_all_snapshots_for_date(snapshot_date) -> dict[int, dict]:
+    """Return ``{trail_id: snapshot_row}`` for every trail on a given date.
+
+    Single JOIN — replaces per-trail :func:`get_weather_for_date` loops on
+    pages that need verdicts for many trails at once. Each value is a plain
+    dict including the trail's ``max_alt_m`` so callers don't need a
+    second query to compute the snowline-delta feature.
+    """
+    iso = (
+        snapshot_date.isoformat()
+        if hasattr(snapshot_date, "isoformat")
+        else snapshot_date
+    )
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT ws.*, t.max_alt_m
+            FROM weather_snapshots ws
+            JOIN trails t ON t.id = ws.trail_id
+            WHERE ws.snapshot_date = ?;
+            """,
+            (iso,),
+        ).fetchall()
+    return {r["trail_id"]: dict(r) for r in rows}
+
+
 def get_latest_snapshot_age_hours(trail_id: int) -> Optional[float]:
     """How many hours ago was the most recent ``snapshot_date`` for this trail?
 
