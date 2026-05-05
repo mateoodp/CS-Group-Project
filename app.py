@@ -21,6 +21,8 @@ Run with:
 
 from __future__ import annotations
 
+import json
+
 import streamlit as st
 
 from data import db_manager
@@ -58,6 +60,26 @@ def initialise_session_state() -> None:
 def bootstrap() -> None:
     """One-time setup: create SQLite tables and seed the trails table."""
     db_manager.setup_db()
+
+
+def _load_persisted_metrics() -> None:
+    """Populate ``last_metrics`` from disk so About is hydrated on cold start.
+
+    Read-only — never trains. Retraining takes 10–60 s and would freeze
+    every app launch. If the JSON is missing or corrupt we fall through;
+    the About page shows its placeholder until the user clicks Retrain.
+    """
+    if st.session_state.get("last_metrics") is not None:
+        return
+    if not (trail_classifier.model_exists()
+            and trail_classifier.METRICS_PATH.exists()):
+        return
+    try:
+        st.session_state["last_metrics"] = json.loads(
+            trail_classifier.METRICS_PATH.read_text()
+        )
+    except Exception:
+        pass
 
 
 def render_landing() -> None:
@@ -122,6 +144,7 @@ def render_landing() -> None:
 def main() -> None:
     bootstrap()
     initialise_session_state()
+    _load_persisted_metrics()
     render_top_nav()
     render_shared_sidebar()
     render_landing()
