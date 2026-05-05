@@ -27,7 +27,7 @@ import streamlit as st
 
 from data import db_manager
 from ml import trail_classifier
-from utils.constants import APP_TAGLINE, APP_TITLE, DEFAULT_RISK_TOLERANCE
+from utils.constants import APP_TITLE, DEFAULT_RISK_TOLERANCE
 from utils.sidebar import render_shared_sidebar
 from utils.topnav import render_top_nav
 
@@ -83,62 +83,82 @@ def _load_persisted_metrics() -> None:
 
 
 def render_landing() -> None:
-    st.title(f"🏔️ {APP_TITLE}")
-    st.caption(APP_TAGLINE)
+    from datetime import date
 
-    n_trails = len(db_manager.get_all_trails())
-    n_weather = len(db_manager.get_all_weather())
-    has_model = trail_classifier.model_exists()
+    import plotly.graph_objects as go
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Trails in catalogue", n_trails)
-    c2.metric("Weather rows cached", f"{n_weather:,}")
-    c3.metric("Model trained",
-              "✅ ready" if has_model else "❌ open About → Retrain")
+    from utils import predictions
+    from utils.constants import CH_CENTRE_LAT, CH_CENTRE_LON
 
-    st.divider()
-    st.markdown("## How the app is laid out")
+    col_left, col_right = st.columns([1, 1], gap="large")
 
-    cards = [
-        ("🧭 Find a hike", "pages/1_Find.py",
-         "**Start here.** Answer 5 questions (canton, region, difficulty, "
-         "length, max altitude) and pick a date. We rank every Swiss trail "
-         "that matches — safest first."),
-        ("🗺️ Map", "pages/2_Map.py",
-         "Browse all 234 trails on a map, colour-coded by today's verdict. "
-         "Use this when you want to explore, not when you have a question."),
-        ("🔀 Compare", "pages/3_Compare.py",
-         "Pit 2–4 trails against each other for one date. Bar chart, radar "
-         "chart, and the numbers side-by-side."),
-        ("ℹ️ About", "pages/4_About.py",
-         "How the ML model works, current accuracy metrics, and the button "
-         "to retrain after seeding historical weather."),
-    ]
-    cols = st.columns(2)
-    for i, (title, path, blurb) in enumerate(cards):
-        with cols[i % 2]:
-            with st.container(border=True):
-                st.markdown(f"### {title}")
-                st.markdown(blurb)
-                st.page_link(path, label=f"Open {title.split(' ', 1)[1]} →")
+    with col_left:
+        st.markdown(f"## {APP_TITLE}")
+        st.markdown(
+            "Around 20 hikers die in the Swiss Alps each year due to "
+            "underestimated conditions. Weather apps show raw data. This tool "
+            "gives a single **SAFE / BORDERLINE / AVOID** verdict per trail — "
+            "powered by a Random Forest trained on two years of "
+            "meteorological history."
+        )
+        st.markdown("---")
 
-    st.divider()
-    st.markdown(
-        """
-        ##### How it flows
+        n_trails = len(db_manager.get_all_trails())
+        n_weather = len(db_manager.get_all_weather())
+        has_model = trail_classifier.model_exists()
 
-        Click a hike anywhere — Find's ranked list, the Map, or Compare's
-        table — and you land on a **Trail Detail** page with the route on a
-        topographic map, hazard markers, weather interpretation (with a
-        Top vs. Bottom split), tricky-parts breakdown, and photos. From
-        there you can change the date, hop into Compare with that trail
-        preselected, or submit a hiker report.
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Trails", n_trails)
+        m2.metric("Weather records", f"{n_weather:,}")
+        m3.metric("Model", "Ready" if has_model else "Not trained")
 
-        On a fresh install the database has only trails — no weather, no
-        model. Open **ℹ️ About** → click **Seed historical weather** → click
-        **Retrain model**. After that everything is cached.
-        """
-    )
+        st.markdown("")
+        if st.button("Find my best hike →", type="primary"):
+            st.switch_page("pages/1_Find.py")
+
+    with col_right:
+        today = date.today()
+        trails = db_manager.get_all_trails()
+        trail_ids = tuple(sorted(t["id"] for t in trails))
+        verdicts = predictions.get_verdicts_for_date(
+            today.isoformat(), trail_ids
+        )
+
+        colour_map = {
+            "SAFE": "#1E7B3A", "BORDERLINE": "#E69F00",
+            "AVOID": "#C0392B", "—": "#AAAAAA",
+        }
+        lats: list[float] = []
+        lons: list[float] = []
+        colours: list[str] = []
+        texts: list[str] = []
+        for t in trails:
+            d = verdicts.get(t["id"], {})
+            v = d.get("verdict", "—")
+            conf = d.get("confidence", 0.0)
+            lats.append(t["lat"])
+            lons.append(t["lon"])
+            colours.append(colour_map.get(v, "#AAAAAA"))
+            texts.append(f"{t['name']}<br>{v} · {conf:.0%}")
+
+        fig = go.Figure(go.Scattergeo(
+            lat=lats, lon=lons, mode="markers",
+            marker=dict(size=7, color=colours, opacity=0.85),
+            text=texts, hoverinfo="text",
+        ))
+        fig.update_geos(
+            visible=False, resolution=50, scope="europe",
+            center=dict(lat=CH_CENTRE_LAT, lon=CH_CENTRE_LON),
+            projection_scale=8,
+        )
+        fig.update_layout(
+            height=420, margin=dict(l=0, r=0, t=0, b=0), showlegend=False,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            "Green = SAFE · Orange = BORDERLINE · "
+            "Red = AVOID · Grey = no data"
+        )
 
 
 def main() -> None:
