@@ -105,11 +105,12 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
             tooltip=code,   # used to capture click → drill-down
         ).add_to(fmap)
 
-    out = st_folium(
-        fmap, width=None, height=560,
-        returned_objects=["last_object_clicked_tooltip"],
-        key="canton_overview_map",
-    )
+    with st.spinner("Loading trail map…"):
+        out = st_folium(
+            fmap, width=None, height=560,
+            returned_objects=["last_object_clicked_tooltip"],
+            key="canton_overview_map",
+        )
     return (out or {}).get("last_object_clicked_tooltip")
 
 
@@ -211,10 +212,16 @@ def render_canton_drilldown_map(
             tooltip=t["name"],
         ).add_to(fmap)
 
-    out = st_folium(
-        fmap, width=None, height=560,
-        returned_objects=["last_object_clicked_tooltip"],
-        key=f"drilldown_map_{canton_code}",
+    with st.spinner("Loading trail map…"):
+        out = st_folium(
+            fmap, width=None, height=560,
+            returned_objects=["last_object_clicked_tooltip"],
+            key=f"drilldown_map_{canton_code}",
+        )
+    st.caption(
+        f"Showing **{len(trails)}** trail(s). "
+        "Grey markers = no cached weather. "
+        "Click a marker to select that trail."
     )
     return (out or {}).get("last_object_clicked_tooltip")
 
