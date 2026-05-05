@@ -214,6 +214,65 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
 
     st.caption(f"Verdict source: **{source}** · Confidence: **{conf:.0%}**")
 
+    st.divider()
+    _render_overview_cards(trail, verdict, conf, source)
+
+
+def _render_overview_cards(trail, verdict, conf, source) -> None:
+    """3-card summary: model verdict (with risk-adjusted overlay), today's
+    weather, trail stats. Sits below the at-a-glance section."""
+    st.markdown(f"## {trail['name']}")
+    st.caption(
+        f"{trail['canton']} · {trail['region']} · "
+        f"Difficulty {trail['difficulty']}"
+    )
+
+    risk = st.session_state.get("risk_tolerance", 3)
+    adjusted = (
+        predictions.apply_risk_tolerance(verdict, risk)
+        if verdict in {"SAFE", "BORDERLINE", "AVOID"}
+        else verdict
+    )
+    snap = db_manager.get_weather_for_date(trail["id"], date.today())
+
+    col_v, col_w, col_t = st.columns(3)
+
+    with col_v.container(border=True):
+        st.markdown("**Model verdict**")
+        colour = VERDICT_COLOURS.get(verdict, "#888")
+        st.markdown(
+            f"<span style='font-size:2rem; font-weight:700; color:{colour};'>"
+            f"{VERDICT_EMOJI.get(verdict, '—')} {verdict}</span>",
+            unsafe_allow_html=True,
+        )
+        st.caption(f"{source} · {conf:.0%} confidence")
+        if adjusted != verdict:
+            adj_colour = VERDICT_COLOURS.get(adjusted, "#888")
+            st.markdown(
+                f"<span style='color:{adj_colour}; font-size:0.9rem;'>"
+                f"Adjusted: **{adjusted}**</span> (risk {risk}/5)",
+                unsafe_allow_html=True,
+            )
+
+    with col_w.container(border=True):
+        st.markdown("**Today's weather**")
+        if snap:
+            st.metric("Temperature", f"{snap['temp_c']:.0f} °C")
+            st.metric("Wind", f"{snap['wind_kmh']:.0f} km/h")
+            st.metric("Precipitation", f"{snap['precip_mm']:.1f} mm")
+            st.metric(
+                "Snowline",
+                f"{int(snap['snowline_m'])} m" if snap['snowline_m'] else "—",
+            )
+        else:
+            st.info("No weather snapshot for today.")
+
+    with col_t.container(border=True):
+        st.markdown("**Trail stats**")
+        st.metric("Length", f"{trail['length_km']} km")
+        st.metric("Max altitude", f"{trail['max_alt_m']} m")
+        st.metric("Min altitude", f"{trail['min_alt_m']} m")
+
 
 def tab_route(trail, snapshot) -> None:
     st.subheader("🗺️ Route on the map")
