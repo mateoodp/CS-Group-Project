@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -482,6 +482,22 @@ def get_recent_user_reports(limit: int = 20) -> list[sqlite3.Row]:
             """,
             (limit,),
         ).fetchall()
+
+
+def get_report_distribution(trail_id: int, days: int = 30) -> dict[str, int]:
+    """Count user reports by label for a trail over the past ``days`` days."""
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT user_label, COUNT(*) AS cnt
+            FROM user_reports
+            WHERE trail_id = ? AND report_date >= ?
+            GROUP BY user_label;
+            """,
+            (trail_id, cutoff),
+        ).fetchall()
+    return {r["user_label"]: r["cnt"] for r in rows}
 
 
 def get_all_user_reports() -> list[sqlite3.Row]:

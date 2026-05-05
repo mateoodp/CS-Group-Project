@@ -654,6 +654,29 @@ def tab_photos(trail) -> None:
 # Bottom-of-page user report form
 # ---------------------------------------------------------------------------
 
+def render_community_consensus(trail) -> None:
+    """Per-trail SAFE/BORDERLINE/AVOID counts from user reports (last 30d).
+
+    Hidden entirely when the trail has zero reports — keeps the page tidy
+    for the long tail of routes with no community input yet.
+    """
+    dist = db_manager.get_report_distribution(trail["id"], days=30)
+    total = sum(dist.values())
+    if total == 0:
+        return
+
+    st.markdown("**Community reports — last 30 days**")
+    cols = st.columns(3)
+    for i, label in enumerate(["SAFE", "BORDERLINE", "AVOID"]):
+        count = dist.get(label, 0)
+        pct = count / total if total else 0
+        cols[i].metric(
+            label,
+            f"{count} report{'s' if count != 1 else ''}",
+            f"{pct:.0%} of {total}",
+        )
+
+
 def render_history_chart(trail) -> None:
     """Compact 30-day SAFE/BORDERLINE/AVOID strip for the selected trail."""
     st.divider()
@@ -815,6 +838,7 @@ def main() -> None:
         tab_photos(trail)
 
     render_history_chart(trail)
+    render_community_consensus(trail)
     render_report_form(trail)
 
 
