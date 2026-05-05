@@ -45,6 +45,15 @@ _FOLIUM_COLOUR_MAP = {
     "SAFE": "green", "BORDERLINE": "orange", "AVOID": "red", "—": "gray",
 }
 
+# Hex versions used by the drill-down DivIcon badges.
+_HEX_MAP = {
+    "SAFE": "#1E7B3A",
+    "BORDERLINE": "#E69F00",
+    "AVOID": "#C0392B",
+    "—": "#888888",
+}
+_LETTER_MAP = {"SAFE": "S", "BORDERLINE": "B", "AVOID": "A", "—": "·"}
+
 
 # ---------------------------------------------------------------------------
 # Date control
@@ -74,7 +83,7 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
     fmap = folium.Map(
         location=[CH_CENTRE_LAT, CH_CENTRE_LON],
         zoom_start=DEFAULT_MAP_ZOOM,
-        tiles="OpenStreetMap",
+        tiles="CartoDB.Positron",
     )
 
     for code, d in sorted(canton_data.items()):
@@ -178,7 +187,7 @@ def render_canton_drilldown_map(
     fmap = folium.Map(
         location=[centre_lat, centre_lon],
         zoom_start=10,
-        tiles="OpenStreetMap",
+        tiles="CartoDB.Positron",
     )
     fmap.fit_bounds([
         [min(lats) - 0.05, min(lons) - 0.05],
@@ -194,7 +203,6 @@ def render_canton_drilldown_map(
         v_dict = verdicts.get(t["id"], {})
         verdict = v_dict.get("verdict", "—")
         conf = v_dict.get("confidence", 0.0)
-        colour = _FOLIUM_COLOUR_MAP.get(verdict, "gray")
         popup_html = (
             f"<b>{t['name']}</b><br>"
             f"{t['canton']} · {t['difficulty']} · {t['length_km']} km<br>"
@@ -203,13 +211,29 @@ def render_canton_drilldown_map(
             f"{f' · {conf:.0%}' if conf else ''}<br>"
             f"<i>Pick from the dropdown below to open the full trail page.</i>"
         )
-        folium.CircleMarker(
+        hex_colour = _HEX_MAP.get(verdict, "#888888")
+        letter = _LETTER_MAP.get(verdict, "·")
+        icon_html = (
+            f"<div style='"
+            f"background:{hex_colour};"
+            f"color:white;"
+            f"border-radius:50%;"
+            f"width:22px;height:22px;"
+            f"display:flex;align-items:center;justify-content:center;"
+            f"font-size:11px;font-weight:700;"
+            f"border:2px solid rgba(255,255,255,0.6);"
+            f"box-shadow:0 1px 3px rgba(0,0,0,0.4);"
+            f"'>{letter}</div>"
+        )
+        folium.Marker(
             location=[t["lat"], t["lon"]],
-            radius=8,
-            color=colour, weight=1.5,
-            fill=True, fill_color=colour, fill_opacity=0.85,
             popup=folium.Popup(popup_html, max_width=260),
             tooltip=t["name"],
+            icon=folium.DivIcon(
+                html=icon_html,
+                icon_size=(22, 22),
+                icon_anchor=(11, 11),
+            ),
         ).add_to(fmap)
 
     with st.spinner("Loading trail map…"):
