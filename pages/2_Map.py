@@ -32,32 +32,30 @@ from utils.constants import (
 from utils.cantons import aggregate_by_canton, canton_label, CANTON_NAMES
 from utils.data_health import ensure_weather_cached
 from utils.sidebar import render_shared_sidebar
+from utils.theme import apply_app_theme, page_hero, section_heading, stat_pills_html
 from utils.topnav import render_top_nav
 
 st.set_page_config(
-    page_title=f"Map · {APP_TITLE}", page_icon="🗺️", layout="wide",
+    page_title=f"Map · {APP_TITLE}",
+    page_icon="🗺️",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 FORECAST_HORIZON_DAYS: int = 6
 
 _FOLIUM_COLOUR_MAP = {
-    "SAFE": "green", "BORDERLINE": "orange", "AVOID": "red", "—": "gray",
+    "SAFE": "green",
+    "BORDERLINE": "orange",
+    "AVOID": "red",
+    "—": "gray",
 }
-
-# Hex versions used by the drill-down DivIcon badges.
-_HEX_MAP = {
-    "SAFE": "#1E7B3A",
-    "BORDERLINE": "#E69F00",
-    "AVOID": "#C0392B",
-    "—": "#888888",
-}
-_LETTER_MAP = {"SAFE": "S", "BORDERLINE": "B", "AVOID": "A", "—": "·"}
 
 
 # ---------------------------------------------------------------------------
 # Date control
 # ---------------------------------------------------------------------------
+
 
 def render_date_picker() -> date:
     """Page-local date picker for the map. Returns the chosen date."""
@@ -78,12 +76,13 @@ def render_date_picker() -> date:
 # Overview view (cantons)
 # ---------------------------------------------------------------------------
 
+
 def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
     """Folium map: one bubble per canton. Returns clicked-canton code or None."""
     fmap = folium.Map(
         location=[CH_CENTRE_LAT, CH_CENTRE_LON],
         zoom_start=DEFAULT_MAP_ZOOM,
-        tiles="CartoDB.Positron",
+        tiles="OpenStreetMap",
     )
 
     for code, d in sorted(canton_data.items()):
@@ -92,7 +91,8 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
         radius = 12 + min(d["count"], 35) * 0.6
         coverage = (
             f"<br>Data coverage: {d['data_coverage_pct']:.0f}%"
-            if d["data_coverage_pct"] < 100 else ""
+            if d["data_coverage_pct"] < 100
+            else ""
         )
         popup_html = (
             f"<b>{canton_label(code)}</b><br>"
@@ -111,24 +111,28 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
             fill_color=colour,
             fill_opacity=0.78,
             popup=folium.Popup(popup_html, max_width=260),
-            tooltip=code,   # used to capture click → drill-down
+            tooltip=code,  # used to capture click → drill-down
         ).add_to(fmap)
 
-    with st.spinner("Loading trail map…"):
-        out = st_folium(
-            fmap, width=None, height=560,
-            returned_objects=["last_object_clicked_tooltip"],
-            key="canton_overview_map",
-        )
+    out = st_folium(
+        fmap,
+        width=None,
+        height=560,
+        returned_objects=["last_object_clicked_tooltip"],
+        key="canton_overview_map",
+    )
     return (out or {}).get("last_object_clicked_tooltip")
 
 
 def render_canton_button_grid(canton_data: dict[str, dict]) -> None:
     """Below-map fallback: buttons for every canton, coloured by verdict."""
-    st.subheader("📂 Drill into a canton")
-    st.caption(
-        "Click any canton (on the map or a button) to zoom in and see "
-        "individual trails."
+    st.markdown(
+        section_heading(
+            "Drill into a canton",
+            "Click any canton on the map or use these quick buttons to zoom into individual trails.",
+            "Browse by region",
+        ),
+        unsafe_allow_html=True,
     )
     cantons_sorted = sorted(
         canton_data.items(),
@@ -146,8 +150,7 @@ def render_canton_button_grid(canton_data: dict[str, dict]) -> None:
             idx += 1
             emoji = VERDICT_EMOJI.get(d["verdict"], "⚪")
             label = f"{emoji} **{code}**  ·  {d['count']}"
-            if c.button(label, key=f"canton_btn_{code}",
-                        use_container_width=True):
+            if c.button(label, key=f"canton_btn_{code}", width="stretch"):
                 st.session_state["map_selected_canton"] = code
                 st.rerun()
 
@@ -157,17 +160,36 @@ def render_summary_metrics(canton_data: dict[str, dict]) -> None:
     counts = {"SAFE": 0, "BORDERLINE": 0, "AVOID": 0, "—": 0}
     for d in canton_data.values():
         counts[d["verdict"]] = counts.get(d["verdict"], 0) + 1
-    total = sum(counts.values())
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🟢 SAFE cantons",       counts["SAFE"])
-    c2.metric("🟠 BORDERLINE cantons", counts["BORDERLINE"])
-    c3.metric("🔴 AVOID cantons",      counts["AVOID"])
-    c4.metric("⚪ no data",            counts["—"])
+    st.markdown(
+        stat_pills_html(
+            [
+                ("safe cantons", counts["SAFE"]),
+                ("borderline cantons", counts["BORDERLINE"]),
+                ("avoid cantons", counts["AVOID"]),
+                ("no data", counts["—"]),
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Drill-down view (trails of a single canton)
 # ---------------------------------------------------------------------------
+
+
+def _verdict_for_trail(trail, target_date: date) -> tuple[str, float]:
+    """Cache lookup → (verdict, confidence)."""
+    from utils import predictions  # local to avoid pandas import on cold load
+
+    snap = db_manager.get_weather_for_date(trail["id"], target_date)
+    if snap is None:
+        return "—", 0.0
+    snap_dict = dict(snap)
+    v, c, _, _ = predictions.predict_for_snapshot(snap_dict, trail["max_alt_m"])
+    floored, _ = predictions.apply_difficulty_floor(v, trail, snap_dict)
+    return floored, float(c)
+
 
 def render_canton_drilldown_map(
     trails, canton_code: str, target_date: date
@@ -177,8 +199,6 @@ def render_canton_drilldown_map(
         st.info(f"No trails recorded for {canton_label(canton_code)}.")
         return None
 
-    from utils import predictions  # local to avoid pandas import on cold load
-
     lats = [t["lat"] for t in trails]
     lons = [t["lon"] for t in trails]
     centre_lat = sum(lats) / len(lats)
@@ -187,22 +207,18 @@ def render_canton_drilldown_map(
     fmap = folium.Map(
         location=[centre_lat, centre_lon],
         zoom_start=10,
-        tiles="CartoDB.Positron",
+        tiles="OpenStreetMap",
     )
-    fmap.fit_bounds([
-        [min(lats) - 0.05, min(lons) - 0.05],
-        [max(lats) + 0.05, max(lons) + 0.05],
-    ])
-
-    trail_ids = tuple(sorted(t["id"] for t in trails))
-    verdicts = predictions.get_verdicts_for_date(
-        target_date.isoformat(), trail_ids
+    fmap.fit_bounds(
+        [
+            [min(lats) - 0.05, min(lons) - 0.05],
+            [max(lats) + 0.05, max(lons) + 0.05],
+        ]
     )
 
     for t in trails:
-        v_dict = verdicts.get(t["id"], {})
-        verdict = v_dict.get("verdict", "—")
-        conf = v_dict.get("confidence", 0.0)
+        verdict, conf = _verdict_for_trail(t, target_date)
+        colour = _FOLIUM_COLOUR_MAP.get(verdict, "gray")
         popup_html = (
             f"<b>{t['name']}</b><br>"
             f"{t['canton']} · {t['difficulty']} · {t['length_km']} km<br>"
@@ -211,56 +227,48 @@ def render_canton_drilldown_map(
             f"{f' · {conf:.0%}' if conf else ''}<br>"
             f"<i>Pick from the dropdown below to open the full trail page.</i>"
         )
-        hex_colour = _HEX_MAP.get(verdict, "#888888")
-        letter = _LETTER_MAP.get(verdict, "·")
-        icon_html = (
-            f"<div style='"
-            f"background:{hex_colour};"
-            f"color:white;"
-            f"border-radius:50%;"
-            f"width:22px;height:22px;"
-            f"display:flex;align-items:center;justify-content:center;"
-            f"font-size:11px;font-weight:700;"
-            f"border:2px solid rgba(255,255,255,0.6);"
-            f"box-shadow:0 1px 3px rgba(0,0,0,0.4);"
-            f"'>{letter}</div>"
-        )
-        folium.Marker(
+        folium.CircleMarker(
             location=[t["lat"], t["lon"]],
+            radius=8,
+            color=colour,
+            weight=1.5,
+            fill=True,
+            fill_color=colour,
+            fill_opacity=0.85,
             popup=folium.Popup(popup_html, max_width=260),
             tooltip=t["name"],
-            icon=folium.DivIcon(
-                html=icon_html,
-                icon_size=(22, 22),
-                icon_anchor=(11, 11),
-            ),
         ).add_to(fmap)
 
-    with st.spinner("Loading trail map…"):
-        out = st_folium(
-            fmap, width=None, height=560,
-            returned_objects=["last_object_clicked_tooltip"],
-            key=f"drilldown_map_{canton_code}",
-        )
-    st.caption(
-        f"Showing **{len(trails)}** trail(s). "
-        "Grey markers = no cached weather. "
-        "Click a marker to select that trail."
+    out = st_folium(
+        fmap,
+        width=None,
+        height=560,
+        returned_objects=["last_object_clicked_tooltip"],
+        key=f"drilldown_map_{canton_code}",
     )
     return (out or {}).get("last_object_clicked_tooltip")
 
 
 def render_drilldown_picker(trails, target_date: date) -> None:
     """Below-map: dropdown to open a trail's detail page."""
-    st.subheader("🏔️ Open a trail's detail page")
-    options = {f"{t['name']}  ·  {t['difficulty']}  ·  {t['length_km']} km": t["id"]
-               for t in trails}
+    st.markdown(
+        section_heading(
+            "Open a trail detail page",
+            "Pick a trail to see route notes, forecast interpretation, photos and reports.",
+            "Trail selector",
+        ),
+        unsafe_allow_html=True,
+    )
+    options = {
+        f"{t['name']}  ·  {t['difficulty']}  ·  {t['length_km']} km": t["id"]
+        for t in trails
+    }
     if not options:
         return
     chosen = st.selectbox(
         "Trail", list(options.keys()), index=0, key="drilldown_trail_select"
     )
-    if st.button("→ Open trail detail", type="primary", use_container_width=True):
+    if st.button("→ Open trail detail", type="primary", width="stretch"):
         st.session_state["selected_trail_id"] = options[chosen]
         st.session_state["selected_date"] = target_date
         st.switch_page("pages/Trail_Detail.py")
@@ -270,11 +278,20 @@ def render_drilldown_picker(trails, target_date: date) -> None:
 # Page entry
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
+    apply_app_theme()
 
-    st.title("🗺️ Trail map")
+    st.markdown(
+        page_hero(
+            "Trail map",
+            "Browse Switzerland by canton, then zoom into individual trails with condition-aware colors for the date you choose.",
+            "Map discovery",
+        ),
+        unsafe_allow_html=True,
+    )
 
     # ---- Date picker (drives every colour on the page) ----
     chosen_date = render_date_picker()
@@ -282,7 +299,9 @@ def main() -> None:
     all_trails = db_manager.get_all_trails()
 
     # Auto-fetch any missing forecasts (4-worker pool, once per session).
-    _, n_failed = ensure_weather_cached(all_trails, page_key="map")
+    _, n_failed = ensure_weather_cached(
+        all_trails, page_key="map", target_date=chosen_date
+    )
     if n_failed:
         st.caption(
             f"⚠️ {n_failed} trail(s) couldn't be fetched (network blip or "
@@ -296,17 +315,17 @@ def main() -> None:
     # ============================================================
     if selected and selected in {t["canton"] for t in all_trails}:
         st.markdown(
-            f"### 📍 Trails in {canton_label(selected)}"
+            section_heading(
+                f"Trails in {canton_label(selected)}",
+                f"Showing every trail in {CANTON_NAMES.get(selected, selected)} for {chosen_date.strftime('%A %d %B %Y')}. Click a marker or use the selector below.",
+                "Canton detail",
+            ),
+            unsafe_allow_html=True,
         )
         cols = st.columns([1, 4])
-        if cols[0].button("← All cantons", use_container_width=True):
+        if cols[0].button("← All cantons", width="stretch"):
             st.session_state["map_selected_canton"] = None
             st.rerun()
-        cols[1].caption(
-            f"Showing every trail in {CANTON_NAMES.get(selected, selected)} "
-            f"with the verdict for **{chosen_date.strftime('%A %d %B %Y')}**. "
-            "Click a marker for the popup, or pick from the dropdown below."
-        )
 
         canton_trails = [t for t in all_trails if t["canton"] == selected]
         clicked_trail_name = render_canton_drilldown_map(
@@ -328,10 +347,13 @@ def main() -> None:
     # ============================================================
     # Canton overview view
     # ============================================================
-    st.caption(
-        f"Each bubble is a Swiss canton, coloured by the average verdict "
-        f"of its trails for **{chosen_date.strftime('%A %d %B %Y')}**. "
-        "Bigger bubble = more trails."
+    st.markdown(
+        section_heading(
+            "Canton overview",
+            f"Each bubble is a Swiss canton, colored by the average trail verdict for {chosen_date.strftime('%A %d %B %Y')}. Bigger bubble means more trails.",
+            "At a glance",
+        ),
+        unsafe_allow_html=True,
     )
 
     canton_data = aggregate_by_canton(all_trails, chosen_date)
