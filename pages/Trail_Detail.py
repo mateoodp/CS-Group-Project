@@ -33,6 +33,7 @@ from data import db_manager
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
 from utils.sidebar import render_shared_sidebar
+from utils.theme import apply_app_theme, page_hero, section_heading
 from utils.topnav import render_top_nav
 from utils.trail_detail import (
     analyse_tricky_sections,
@@ -46,7 +47,9 @@ from utils.trail_detail import (
 )
 
 st.set_page_config(
-    page_title=f"Trail · {APP_TITLE}", page_icon="🏔️", layout="wide",
+    page_title=f"Trail · {APP_TITLE}",
+    page_icon="🏔️",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
@@ -61,39 +64,57 @@ _DETAIL_CSS: str = """
 <style>
   .trail-hero {
     background: #ffffff;
-    border: 1px solid #e6e8eb;
-    border-radius: 14px;
-    padding: 20px 22px;
-    margin-bottom: 8px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    border: 1px solid rgba(20, 32, 28, .07);
+    border-radius: 30px;
+    padding: 24px 26px;
+    margin-bottom: 1rem;
+    box-shadow: 0 24px 60px rgba(21, 39, 32, .1);
   }
   .trail-hero-title {
-    font-size: 1.6rem; font-weight: 700; line-height: 1.2;
-    color: #1a1a1a; margin-bottom: 4px;
+    font-size: clamp(2rem, 3.2vw, 3.6rem);
+    font-weight: 850;
+    line-height: 1;
+    color: #14201c;
+    margin-bottom: 10px;
+    letter-spacing: 0;
   }
   .trail-hero-meta {
-    color: #6b7177; font-size: 0.92rem; margin-bottom: 14px;
+    color: #6b756f; font-size: 0.94rem; margin-bottom: 18px;
   }
   .trail-hero-stats {
     display: grid; grid-template-columns: repeat(4, 1fr);
-    gap: 18px; padding-top: 14px;
-    border-top: 1px solid #f0f1f3;
+    gap: 14px; padding-top: 18px;
+    border-top: 1px solid #edf0ed;
   }
-  .stat-value { font-size: 1.1rem; font-weight: 600; color: #1a1a1a; }
-  .stat-label { font-size: 0.78rem; color: #8b9197; margin-top: 2px; }
+  .stat-value { font-size: 1.15rem; font-weight: 850; color: #14201c; }
+  .stat-label {
+    font-size: 0.76rem; color: #6b756f; margin-top: 3px;
+    font-weight: 800; text-transform: uppercase;
+  }
   .verdict-chip {
-    float: right; background: var(--c, #888); color: white;
-    padding: 6px 14px; border-radius: 999px;
-    font-size: 0.85rem; font-weight: 600;
+    float: right;
+    background: var(--c, #888);
+    color: white;
+    padding: 8px 15px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 850;
+    box-shadow: 0 14px 28px rgba(21, 39, 32, .14);
   }
   .verdict-chip-sub { display: block; font-size: 0.72rem; opacity: 0.85; }
   .alt-card {
-    background: #ffffff; border: 1px solid #e6e8eb;
-    border-radius: 12px; padding: 14px 16px;
+    background: #ffffff;
+    border: 1px solid rgba(20, 32, 28, .07);
+    border-radius: 24px;
+    padding: 16px 18px;
+    box-shadow: 0 14px 34px rgba(21, 39, 32, .07);
   }
   .alt-card h5 { margin: 0 0 8px 0; font-size: 0.92rem; color: #4a4a4a; }
   .alt-card .alt-temp { font-size: 1.6rem; font-weight: 700; }
   .alt-card .alt-row { color: #6b7177; font-size: 0.88rem; margin-top: 4px; }
+  @media (max-width: 900px) {
+    .trail-hero-stats { grid-template-columns: repeat(2, 1fr); }
+  }
 </style>
 """
 
@@ -164,7 +185,7 @@ def render_action_bar(trail, target_date) -> date:
         st.markdown("&nbsp;", unsafe_allow_html=True)  # vertical alignment shim
         if st.button(
             "🔀 Compare with another trail",
-            use_container_width=True,
+            width="stretch",
             help=f"Opens Compare with {trail['name']} preselected.",
         ):
             st.session_state["compare_seed_trail_id"] = trail["id"]
@@ -173,12 +194,15 @@ def render_action_bar(trail, target_date) -> date:
 
     with bar_cols[2]:
         st.markdown("&nbsp;", unsafe_allow_html=True)
-        st.page_link("pages/1_Find.py", label="Find more hikes", icon="🧭",
-                     use_container_width=True)
+        st.page_link(
+            "pages/1_Find.py",
+            label="Find more hikes",
+            icon="🧭",
+            width="stretch",
+        )
     with bar_cols[3]:
         st.markdown("&nbsp;", unsafe_allow_html=True)
-        st.page_link("pages/2_Map.py", label="Back to map", icon="🗺️",
-                     use_container_width=True)
+        st.page_link("pages/2_Map.py", label="Back to map", icon="🗺️", width="stretch")
 
     return chosen
 
@@ -187,95 +211,79 @@ def render_action_bar(trail, target_date) -> date:
 # Tabs
 # ---------------------------------------------------------------------------
 
+
 def tab_overview(trail, snapshot, verdict, conf, source) -> None:
-    st.subheader("📍 At a glance")
+    st.markdown(
+        section_heading(
+            "At a glance",
+            "Core route facts and the cached forecast snapshot for the selected date.",
+            "Overview",
+        ),
+        unsafe_allow_html=True,
+    )
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Length", f"{trail['length_km']} km")
     c2.metric("Max altitude", f"{trail['max_alt_m']} m")
-    c3.metric("Elevation range",
-              f"{trail['max_alt_m'] - trail['min_alt_m']} m",
-              help="Difference between min and max altitude.")
+    c3.metric(
+        "Elevation range",
+        f"{trail['max_alt_m'] - trail['min_alt_m']} m",
+        help="Difference between min and max altitude.",
+    )
     c4.metric("Difficulty (SAC)", trail["difficulty"])
 
     st.markdown("#### Snapshot for this date")
     if snapshot is None:
-        st.info("No cached weather snapshot for this date. "
-                "Use **🔄 Refresh weather** in the sidebar to fetch one.")
+        st.info(
+            "No cached weather snapshot for this date. "
+            "Use **🔄 Refresh weather** in the sidebar to fetch one."
+        )
     else:
         a, b, c, d = st.columns(4)
-        a.metric("🌡️ Temp",
-                 f"{snapshot['temp_c']:.0f} °C" if snapshot.get("temp_c") is not None else "—")
-        b.metric("💨 Wind",
-                 f"{snapshot['wind_kmh']:.0f} km/h" if snapshot.get("wind_kmh") is not None else "—")
-        c.metric("☔ Precip",
-                 f"{snapshot['precip_mm']:.1f} mm" if snapshot.get("precip_mm") is not None else "—")
-        d.metric("❄️ Snowline",
-                 f"{int(snapshot['snowline_m'])} m" if snapshot.get("snowline_m") is not None else "—")
+        a.metric(
+            "🌡️ Temp",
+            (
+                f"{snapshot['temp_c']:.0f} °C"
+                if snapshot.get("temp_c") is not None
+                else "—"
+            ),
+        )
+        b.metric(
+            "💨 Wind",
+            (
+                f"{snapshot['wind_kmh']:.0f} km/h"
+                if snapshot.get("wind_kmh") is not None
+                else "—"
+            ),
+        )
+        c.metric(
+            "☔ Precip",
+            (
+                f"{snapshot['precip_mm']:.1f} mm"
+                if snapshot.get("precip_mm") is not None
+                else "—"
+            ),
+        )
+        d.metric(
+            "❄️ Snowline",
+            (
+                f"{int(snapshot['snowline_m'])} m"
+                if snapshot.get("snowline_m") is not None
+                else "—"
+            ),
+        )
 
     st.caption(f"Verdict source: **{source}** · Confidence: **{conf:.0%}**")
 
-    st.divider()
-    _render_overview_cards(trail, verdict, conf, source)
-
-
-def _render_overview_cards(trail, verdict, conf, source) -> None:
-    """3-card summary: model verdict (with risk-adjusted overlay), today's
-    weather, trail stats. Sits below the at-a-glance section."""
-    st.markdown(f"## {trail['name']}")
-    st.caption(
-        f"{trail['canton']} · {trail['region']} · "
-        f"Difficulty {trail['difficulty']}"
-    )
-
-    risk = st.session_state.get("risk_tolerance", 3)
-    adjusted = (
-        predictions.apply_risk_tolerance(verdict, risk)
-        if verdict in {"SAFE", "BORDERLINE", "AVOID"}
-        else verdict
-    )
-    snap = db_manager.get_weather_for_date(trail["id"], date.today())
-
-    col_v, col_w, col_t = st.columns(3)
-
-    with col_v.container(border=True):
-        st.markdown("**Model verdict**")
-        colour = VERDICT_COLOURS.get(verdict, "#888")
-        st.markdown(
-            f"<span style='font-size:2rem; font-weight:700; color:{colour};'>"
-            f"{VERDICT_EMOJI.get(verdict, '—')} {verdict}</span>",
-            unsafe_allow_html=True,
-        )
-        st.caption(f"{source} · {conf:.0%} confidence")
-        if adjusted != verdict:
-            adj_colour = VERDICT_COLOURS.get(adjusted, "#888")
-            st.markdown(
-                f"<span style='color:{adj_colour}; font-size:0.9rem;'>"
-                f"Adjusted: **{adjusted}**</span> (risk {risk}/5)",
-                unsafe_allow_html=True,
-            )
-
-    with col_w.container(border=True):
-        st.markdown("**Today's weather**")
-        if snap:
-            st.metric("Temperature", f"{snap['temp_c']:.0f} °C")
-            st.metric("Wind", f"{snap['wind_kmh']:.0f} km/h")
-            st.metric("Precipitation", f"{snap['precip_mm']:.1f} mm")
-            st.metric(
-                "Snowline",
-                f"{int(snap['snowline_m'])} m" if snap['snowline_m'] else "—",
-            )
-        else:
-            st.info("No weather snapshot for today.")
-
-    with col_t.container(border=True):
-        st.markdown("**Trail stats**")
-        st.metric("Length", f"{trail['length_km']} km")
-        st.metric("Max altitude", f"{trail['max_alt_m']} m")
-        st.metric("Min altitude", f"{trail['min_alt_m']} m")
-
 
 def tab_route(trail, snapshot) -> None:
-    st.subheader("🗺️ Route on the map")
+    st.markdown(
+        section_heading(
+            "Route on the map",
+            "Approximate loop geometry with route context and hazard markers.",
+            "Map",
+        ),
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Note: detailed GPX traces aren't bundled with the seeded trails, so "
         "the loop drawn here is **approximate** — a circle centred on the "
@@ -288,13 +296,18 @@ def tab_route(trail, snapshot) -> None:
         location=[trail["lat"], trail["lon"]],
         zoom_start=13,
         tiles="OpenTopoMap",
-        attr=("Map data: © <a href='https://www.openstreetmap.org/copyright'>"
-              "OpenStreetMap</a> contributors, SRTM | Map style: © "
-              "<a href='https://opentopomap.org'>OpenTopoMap</a> "
-              "(CC-BY-SA)"),
+        attr=(
+            "Map data: © <a href='https://www.openstreetmap.org/copyright'>"
+            "OpenStreetMap</a> contributors, SRTM | Map style: © "
+            "<a href='https://opentopomap.org'>OpenTopoMap</a> "
+            "(CC-BY-SA)"
+        ),
     )
     folium.PolyLine(
-        pts, color="#1f7ae0", weight=5, opacity=0.95,
+        pts,
+        color="#1f7ae0",
+        weight=5,
+        opacity=0.95,
         tooltip=f"≈{trail['length_km']} km loop",
     ).add_to(fmap)
     folium.Marker(
@@ -313,16 +326,18 @@ def tab_route(trail, snapshot) -> None:
     hazards = hazard_points(pts, trail, snapshot)
     for h in hazards:
         bg = "#E69F00" if h["severity"] == "warn" else "#C0392B"
-        diamond = folium.DivIcon(html=(
-            f"<div style='width:30px; height:30px; transform:rotate(45deg);"
-            f"background:{bg}; border:2px solid #000;"
-            f"display:flex; align-items:center; justify-content:center;'>"
-            f"<span style='transform:rotate(-45deg); font-weight:700;"
-            f"color:#000; font-size:14px;'>!</span></div>"
-        ))
-        folium.Marker(
-            [h["lat"], h["lon"]], tooltip=h["label"], icon=diamond
-        ).add_to(fmap)
+        diamond = folium.DivIcon(
+            html=(
+                f"<div style='width:30px; height:30px; transform:rotate(45deg);"
+                f"background:{bg}; border:2px solid #000;"
+                f"display:flex; align-items:center; justify-content:center;'>"
+                f"<span style='transform:rotate(-45deg); font-weight:700;"
+                f"color:#000; font-size:14px;'>!</span></div>"
+            )
+        )
+        folium.Marker([h["lat"], h["lon"]], tooltip=h["label"], icon=diamond).add_to(
+            fmap
+        )
 
     if hazards:
         st.markdown(
@@ -349,27 +364,44 @@ def tab_route(trail, snapshot) -> None:
     snowline = snap["snowline_m"] if snap and snap["snowline_m"] else None
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=[trail["length_km"] * i / n for i in xs], y=ys, mode="lines",
-        line=dict(color="#1E7B3A", width=3),
-        fill="tozeroy", fillcolor="rgba(30, 123, 58, 0.15)", name="Elevation",
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=[trail["length_km"] * i / n for i in xs],
+            y=ys,
+            mode="lines",
+            line=dict(color="#1E7B3A", width=3),
+            fill="tozeroy",
+            fillcolor="rgba(30, 123, 58, 0.15)",
+            name="Elevation",
+        )
+    )
     if snowline:
         fig.add_hline(
-            y=snowline, line_dash="dash", line_color="#3a7bd5",
+            y=snowline,
+            line_dash="dash",
+            line_color="#3a7bd5",
             annotation_text=f"Snowline · {int(snowline)} m",
             annotation_position="top right",
         )
     fig.update_layout(
-        height=320, margin=dict(l=10, r=10, t=10, b=10),
-        xaxis_title="Distance (km)", yaxis_title="Altitude (m)",
+        height=320,
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis_title="Distance (km)",
+        yaxis_title="Altitude (m)",
         showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def tab_tricky(trail, snapshot) -> None:
-    st.subheader("⚠️ Tricky parts & what to pack")
+    st.markdown(
+        section_heading(
+            "Tricky parts and what to pack",
+            "Terrain, weather and logistics notes generated from route grade and forecast conditions.",
+            "Safety notes",
+        ),
+        unsafe_allow_html=True,
+    )
     parts = analyse_tricky_sections(trail, snapshot)
     for p in parts:
         with st.container(border=True):
@@ -384,6 +416,7 @@ def tab_tricky(trail, snapshot) -> None:
 # ---------------------------------------------------------------------------
 # Weather tab — merges the old Forecast page into Trail Detail
 # ---------------------------------------------------------------------------
+
 
 def _altitude_card(label: str, alt_m: int, projected: dict | None) -> str:
     if not projected:
@@ -439,8 +472,10 @@ def _render_best_day(df, trail, risk: int) -> None:
     scored = []
     for row in df.itertuples(index=False):
         snap = {
-            "temp_c": row.temp_c, "wind_kmh": row.wind_kmh,
-            "precip_mm": row.precip_mm, "snowline_m": row.snowline_m,
+            "temp_c": row.temp_c,
+            "wind_kmh": row.wind_kmh,
+            "precip_mm": row.precip_mm,
+            "snowline_m": row.snowline_m,
             "cloud_pct": row.cloud_pct,
         }
         v, c, _, _ = predictions.predict_for_snapshot(snap, trail["max_alt_m"])
@@ -456,9 +491,13 @@ def _render_best_day(df, trail, risk: int) -> None:
         )
     elif best_v == "BORDERLINE":
         msg = (
-            f" Note: {grade} routes are never marked SAFE; this is the best "
-            "*weather*, not a safety endorsement."
-        ) if is_hard else " Consider rescheduling if you can."
+            (
+                f" Note: {grade} routes are never marked SAFE; this is the best "
+                "*weather*, not a safety endorsement."
+            )
+            if is_hard
+            else " Consider rescheduling if you can."
+        )
         st.warning(
             f"🌗 **Best window this week:** {best_date.strftime('%A %d %B')} — "
             f"BORDERLINE.{msg}"
@@ -478,8 +517,10 @@ def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
     cols = st.columns(len(df))
     for col, row in zip(cols, df.itertuples(index=False)):
         snap = {
-            "temp_c": row.temp_c, "wind_kmh": row.wind_kmh,
-            "precip_mm": row.precip_mm, "snowline_m": row.snowline_m,
+            "temp_c": row.temp_c,
+            "wind_kmh": row.wind_kmh,
+            "precip_mm": row.precip_mm,
+            "snowline_m": row.snowline_m,
             "cloud_pct": row.cloud_pct,
         }
         verdict, conf, _, source = predictions.predict_for_snapshot(
@@ -487,7 +528,7 @@ def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
         )
         adjusted, _ = predictions.adjust_verdict(verdict, trail, snap, risk)
         colour = VERDICT_COLOURS[adjusted]
-        is_today = (row.snapshot_date == target_date)
+        is_today = row.snapshot_date == target_date
         ring = "outline:3px solid #1f7ae0;" if is_today else ""
         with col:
             st.markdown(
@@ -518,24 +559,30 @@ def _render_timeline_chart(df) -> None:
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(
             go.Scatter(
-                x=df["snapshot_date"], y=df["temp_c"],
-                mode="lines+markers", name="Temp (°C)",
+                x=df["snapshot_date"],
+                y=df["temp_c"],
+                mode="lines+markers",
+                name="Temp (°C)",
                 line=dict(color="#C0392B", width=3),
             ),
             secondary_y=False,
         )
         fig.add_trace(
             go.Scatter(
-                x=df["snapshot_date"], y=df["wind_kmh"],
-                mode="lines+markers", name="Wind (km/h)",
+                x=df["snapshot_date"],
+                y=df["wind_kmh"],
+                mode="lines+markers",
+                name="Wind (km/h)",
                 line=dict(color="#3a7bd5", width=3, dash="dot"),
             ),
             secondary_y=True,
         )
         fig.add_trace(
             go.Bar(
-                x=df["snapshot_date"], y=df["precip_mm"],
-                name="Precip (mm)", opacity=0.55,
+                x=df["snapshot_date"],
+                y=df["precip_mm"],
+                name="Precip (mm)",
+                opacity=0.55,
                 marker_color="#1E7B3A",
             ),
             secondary_y=True,
@@ -548,11 +595,18 @@ def _render_timeline_chart(df) -> None:
         )
         fig.update_yaxes(title_text="Temperature (°C)", secondary_y=False)
         fig.update_yaxes(title_text="Wind (km/h) · Precip (mm)", secondary_y=True)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
-    st.subheader(f"🌦️ Why is it considered {adjusted or '—'}?")
+    st.markdown(
+        section_heading(
+            f"Why is it considered {adjusted or '—'}?",
+            "The same verdict logic is broken down into readable weather and terrain signals.",
+            "Forecast explanation",
+        ),
+        unsafe_allow_html=True,
+    )
     interp = interpret_weather(snapshot, trail, adjusted or verdict)
 
     if interp["headline"]:
@@ -604,7 +658,14 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
                 st.markdown(body)
 
     st.divider()
-    st.subheader("📅 The whole week, at a glance")
+    st.markdown(
+        section_heading(
+            "The whole week at a glance",
+            "Use the seven-day outlook to find a better window if today looks mixed.",
+            "Forecast window",
+        ),
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Use this to find the best day to go — verdicts here use the same "
         "safety logic as the headline above."
@@ -616,7 +677,14 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
 
 
 def tab_photos(trail) -> None:
-    st.subheader("📷 Pictures of the route")
+    st.markdown(
+        section_heading(
+            "Pictures of the route",
+            "Free-licensed Wikimedia Commons images for visual context.",
+            "Photos",
+        ),
+        unsafe_allow_html=True,
+    )
     query = f"{trail['name']} {trail['canton']} hiking"
     with st.spinner("Searching Wikimedia Commons…"):
         images = fetch_trail_images(query, limit=4)
@@ -639,7 +707,7 @@ def tab_photos(trail) -> None:
     for i, img in enumerate(images):
         with cols[i % 2]:
             try:
-                st.image(img["url"], use_container_width=True, caption=img["title"])
+                st.image(img["url"], width="stretch", caption=img["title"])
             except Exception:
                 st.write(f"[{img['title']}]({img['page']})")
             st.markdown(
@@ -654,87 +722,16 @@ def tab_photos(trail) -> None:
 # Bottom-of-page user report form
 # ---------------------------------------------------------------------------
 
-def render_community_consensus(trail) -> None:
-    """Per-trail SAFE/BORDERLINE/AVOID counts from user reports (last 30d).
-
-    Hidden entirely when the trail has zero reports — keeps the page tidy
-    for the long tail of routes with no community input yet.
-    """
-    dist = db_manager.get_report_distribution(trail["id"], days=30)
-    total = sum(dist.values())
-    if total == 0:
-        return
-
-    st.markdown("**Community reports — last 30 days**")
-    cols = st.columns(3)
-    for i, label in enumerate(["SAFE", "BORDERLINE", "AVOID"]):
-        count = dist.get(label, 0)
-        pct = count / total if total else 0
-        cols[i].metric(
-            label,
-            f"{count} report{'s' if count != 1 else ''}",
-            f"{pct:.0%} of {total}",
-        )
-
-
-def render_history_chart(trail) -> None:
-    """Compact 30-day SAFE/BORDERLINE/AVOID strip for the selected trail."""
-    st.divider()
-    st.subheader("Conditions history — last 30 days")
-
-    today = date.today()
-    start = today - timedelta(days=29)
-    rows = db_manager.get_weather_history_range(trail["id"], start, today)
-
-    if not rows:
-        st.info(
-            "No historical data for this trail. "
-            "Seed weather from the **About** tab."
-        )
-        return
-
-    colour_map = {"SAFE": "#1E7B3A", "BORDERLINE": "#E69F00", "AVOID": "#C0392B"}
-    dates: list = []
-    colours: list[str] = []
-    verdicts: list[str] = []
-    for row in rows:
-        v, _, _, _ = predictions.predict_for_snapshot(row, trail["max_alt_m"])
-        dates.append(row["snapshot_date"])
-        colours.append(colour_map.get(v, "#AAAAAA"))
-        verdicts.append(v)
-
-    fig = go.Figure(
-        go.Bar(
-            x=dates,
-            y=[1] * len(dates),
-            marker_color=colours,
-            text=verdicts,
-            textposition="none",
-            hovertemplate="%{x}: %{text}<extra></extra>",
-        )
-    )
-    fig.update_layout(
-        height=140,
-        margin=dict(l=10, r=10, t=10, b=10),
-        yaxis=dict(visible=False, range=[0, 1.2]),
-        xaxis=dict(title=""),
-        showlegend=False,
-        bargap=0.05,
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    c1, c2, c3 = st.columns(3)
-    c1.markdown("🟢 **SAFE**")
-    c2.markdown("🟠 **BORDERLINE**")
-    c3.markdown("🔴 **AVOID**")
-
 
 def render_report_form(trail) -> None:
     st.divider()
-    st.subheader(f"📝 Hiked {trail['name']}? Submit a report")
-    st.caption(
-        "Your report becomes ground truth on the next model retrain — it "
-        "helps the verdict get smarter for everyone."
+    st.markdown(
+        section_heading(
+            f"Hiked {trail['name']}? Submit a report",
+            "Your report becomes ground truth on the next model retrain and helps verdicts improve.",
+            "Community signal",
+        ),
+        unsafe_allow_html=True,
     )
     with st.form(f"user_report_form_{trail['id']}", clear_on_submit=True):
         c1, c2 = st.columns([1, 1])
@@ -747,14 +744,18 @@ def render_report_form(trail) -> None:
             )
         with c2:
             comment = st.text_area(
-                "What was it like?", "", max_chars=300,
+                "What was it like?",
+                "",
+                max_chars=300,
                 placeholder="e.g. 'Section above 2300 m had verglas — needed crampons.'",
             )
         submitted = st.form_submit_button("Submit report", type="primary")
         if submitted:
             db_manager.insert_user_report(
-                trail_id=trail["id"], report_date=report_date,
-                user_label=label, comment=comment.strip(),
+                trail_id=trail["id"],
+                report_date=report_date,
+                user_label=label,
+                comment=comment.strip(),
             )
             st.success(f"Report saved for {trail['name']}. Thank you 🙏")
 
@@ -763,13 +764,22 @@ def render_report_form(trail) -> None:
 # Page entry
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
+    apply_app_theme()
 
     trail_id = st.session_state.get("selected_trail_id")
     if trail_id is None:
-        st.title("🏔️ Trail detail")
+        st.markdown(
+            page_hero(
+                "Trail detail",
+                "Choose a route from Find or Map to see forecast interpretation, route context, hazards and photos.",
+                "Route intelligence",
+            ),
+            unsafe_allow_html=True,
+        )
         st.warning(
             "No trail selected yet. Open **🧭 Find a hike** for a quiz-based "
             "ranking, or **🗺️ Map** to browse all trails visually."
@@ -803,9 +813,7 @@ def main() -> None:
 
     risk = st.session_state.get("risk_tolerance", 3)
     if verdict in {"SAFE", "BORDERLINE", "AVOID"}:
-        adjusted, caveats = predictions.adjust_verdict(
-            verdict, trail, snapshot, risk
-        )
+        adjusted, caveats = predictions.adjust_verdict(verdict, trail, snapshot, risk)
     else:
         adjusted, caveats = verdict, []
 
@@ -837,8 +845,6 @@ def main() -> None:
     with photos:
         tab_photos(trail)
 
-    render_history_chart(trail)
-    render_community_consensus(trail)
     render_report_form(trail)
 
 
