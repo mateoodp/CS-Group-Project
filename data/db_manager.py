@@ -28,7 +28,10 @@ from typing import Iterator, Optional
 # Paths & connection helpers
 # ---------------------------------------------------------------------------
 
-DB_PATH: Path = Path(__file__).resolve().parent.parent / "hiking_app.db"
+import os
+DB_PATH: Path = (Path("/tmp/hiking_app.db")
+    if os.getenv("HOME") == "/home/appuser"
+    else Path(__file__).resolve().parent.parent / "hiking_app.db")
 TRAILS_SEED_PATH: Path = Path(__file__).resolve().parent / "trails_seed.json"
 
 
