@@ -1,4 +1,4 @@
-"""Swiss Alpine Hiking Condition Forecaster — Streamlit entry point.
+"""Swiss Alpine Hiking Condition Forecaster - Streamlit entry point.
 
 Owner: TM1 (Project Lead)
 Supporting: TM2, TM3
@@ -6,14 +6,14 @@ Supporting: TM2, TM3
 This file is the landing screen and one-time bootstrap. Real work happens
 on the four pages under ``pages/``:
 
-    1. Find a hike (front door — quiz + date)
+    1. Find a hike (front door - quiz + date)
     2. Map         (visual overview)
     3. Compare     (side-by-side for one date)
     4. About       (ML pipeline + retrain)
 
 Plus a hidden Trail Detail sub-page reachable by clicking any hike from
 the four pages above. The horizontal nav at the top of every page comes
-from :mod:`utils.topnav` — Streamlit's auto sidebar nav is hidden via CSS.
+from :mod:`utils.topnav`; Streamlit's auto sidebar nav is hidden via CSS.
 
 Run with:
     streamlit run app.py
@@ -27,38 +27,31 @@ import streamlit as st
 
 from data import db_manager
 from ml import trail_classifier
-from utils.constants import APP_TITLE, DEFAULT_RISK_TOLERANCE
+from utils.constants import APP_TITLE, DEFAULT_RISK_TOLERANCE, VERDICT_EMOJI
+from utils.route_images import route_image_info, trail_detail_url
 from utils.sidebar import render_shared_sidebar
 from utils.theme import apply_app_theme
 from utils.topnav import render_top_nav
+from utils.trail_detail import difficulty_dots_html, naismith_time
 
 # ---------------------------------------------------------------------------
-# Page config — MUST be the first Streamlit command in the script.
+# Page config - MUST be the first Streamlit command in the script.
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title=APP_TITLE,
-    page_icon="🏔️",
+    page_icon="mountain",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 
-LANDING_IMAGES: tuple[str, ...] = (
-    "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=1200&q=85",
-    "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1200&q=85",
-    "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1200&q=85",
-    "https://images.unsplash.com/photo-1486911278844-a81c5267e227?auto=format&fit=crop&w=1200&q=85",
-    "https://images.unsplash.com/photo-1527004013197-933c4bb611b3?auto=format&fit=crop&w=1200&q=85",
-    "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1200&q=85",
-)
-
 PREFERRED_DESTINATIONS: tuple[str, ...] = (
     "Gornergrat Panorama",
-    "Aletsch — Märjelensee",
-    "Männlichen — Kleine Scheidegg",
+    "Aletsch 闂?M闂佺儵鏅濋悘姊沞lensee",
+    "M闂佺儵鏅濋悘鎭榣ichen 闂?Kleine Scheidegg",
     "Rigi Panorama",
     "Oeschinensee",
-    "Saas-Fee — Hannig",
+    "Saas-Fee 闂?Hannig",
 )
 
 LANDING_CSS: str = """
@@ -173,9 +166,144 @@ LANDING_CSS: str = """
     box-shadow: 0 24px 60px rgba(21, 39, 32, .12);
   }
 
+  .route-card-link {
+    display: block;
+    color: inherit;
+    cursor: pointer;
+    text-decoration: none;
+    position: relative;
+  }
+
+  .route-card-link:hover .hero-card,
+  .route-card-link:hover .destination-card {
+    transform: translateY(-3px);
+    box-shadow: 0 30px 70px rgba(21, 39, 32, .16);
+  }
+
+  .hike-card-link {
+    display: block;
+    color: #14201c;
+    cursor: pointer;
+    text-decoration: none;
+    margin-bottom: .65rem;
+  }
+
+  .hike-card-link:hover .hike-card {
+    transform: translateY(-3px);
+    box-shadow: 0 24px 52px rgba(21, 39, 32, .12);
+  }
+
+  .hike-card {
+    background: #ffffff;
+    border: 1px solid rgba(20, 32, 28, .07);
+    border-radius: 28px;
+    padding: .72rem;
+    margin-bottom: .65rem;
+    position: relative;
+    box-shadow: 0 18px 42px rgba(21, 39, 32, .08);
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+
+  .hike-card-hitbox {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    border-radius: 28px;
+    text-decoration: none;
+  }
+
+  .hike-card-image {
+    height: 210px;
+    border-radius: 22px;
+    background-size: cover;
+    background-position: center;
+    margin-bottom: 1rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hike-card-image::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,.04), rgba(0,0,0,.38));
+  }
+
+  .hike-card-image .verdict-pill {
+    position: absolute;
+    left: .85rem;
+    bottom: .85rem;
+    z-index: 1;
+    margin-left: 0;
+  }
+
+  .hike-card-body {
+    padding: 0 .35rem .4rem;
+  }
+
+  .hike-card-title {
+    font-size: 1.18rem;
+    font-weight: 850;
+    color: #14201c;
+    line-height: 1.3;
+    margin-bottom: 10px;
+  }
+
+  .hike-card-meta {
+    font-size: 0.85rem;
+    color: #6b7177;
+    margin-bottom: .75rem;
+    min-height: 2.4rem;
+  }
+
+  .hike-card-meta,
+  .hike-card-meta * {
+    color: #6b7177;
+  }
+
+  .hike-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    border-top: 1px solid #edf0ed;
+    padding-top: 12px;
+  }
+
+  .hike-stat-value {
+    font-size: .98rem;
+    font-weight: 850;
+    color: #14201c;
+  }
+
+  .hike-stat-label {
+    font-size: 0.72rem;
+    color: #6b756f;
+    margin-top: 2px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .verdict-pill {
+    display: inline-block;
+    padding: 5px 11px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 850;
+    color: white;
+    vertical-align: middle;
+    margin-left: 8px;
+  }
+
+  .verdict-pill.safe { background:#5f9f45; }
+  .verdict-pill.borderline { background:#c9851e; }
+  .verdict-pill.avoid { background:#b7473f; }
+  .verdict-pill.unknown { background:#7c8580; }
+
   .hero-card {
     border-radius: 32px;
     padding: .8rem;
+    position: relative;
+    transition: transform .18s ease, box-shadow .18s ease;
   }
 
   .hero-image {
@@ -230,6 +358,20 @@ LANDING_CSS: str = """
     backdrop-filter: blur(10px);
   }
 
+  .image-notice {
+    position: absolute;
+    right: .85rem;
+    top: .85rem;
+    z-index: 2;
+    border-radius: 999px;
+    background: rgba(20, 32, 28, .74);
+    color: #fff;
+    padding: .42rem .68rem;
+    font-size: .72rem;
+    font-weight: 850;
+    backdrop-filter: blur(10px);
+  }
+
   .arrow-button {
     width: 52px;
     height: 52px;
@@ -267,6 +409,8 @@ LANDING_CSS: str = """
     border-radius: 28px;
     padding: .72rem;
     margin-bottom: .65rem;
+    position: relative;
+    transition: transform .18s ease, box-shadow .18s ease;
   }
 
   .destination-img {
@@ -275,6 +419,8 @@ LANDING_CSS: str = """
     background-size: cover;
     background-position: center;
     margin-bottom: 1rem;
+    position: relative;
+    overflow: hidden;
   }
 
   .destination-card h3 {
@@ -308,10 +454,20 @@ LANDING_CSS: str = """
   .status.avoid { background: #fbe3df; color: var(--danger); }
 
   .feature-card {
+    display: block;
     min-height: 190px;
     border-radius: 26px;
     padding: 1.35rem;
     margin-bottom: .75rem;
+    color: inherit;
+    position: relative;
+    text-decoration: none;
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+
+  .feature-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 30px 70px rgba(21, 39, 32, .16);
   }
 
   .feature-icon {
@@ -326,13 +482,18 @@ LANDING_CSS: str = """
     margin-bottom: 1.05rem;
   }
 
-  .feature-card h3 {
+  .feature-card h3,
+  .feature-title {
+    display: block;
     color: var(--ink);
     font-size: 1.12rem;
+    font-weight: 850;
     margin: 0 0 .55rem;
   }
 
-  .feature-card p {
+  .feature-card p,
+  .feature-body {
+    display: block;
     color: var(--muted);
     line-height: 1.55;
     margin: 0;
@@ -391,6 +552,14 @@ def _landing_status_for_difficulty(difficulty: str) -> str:
     return "Safe Today"
 
 
+def _landing_verdict_for_difficulty(difficulty: str) -> str:
+    if difficulty in {"T4", "T5", "T6"}:
+        return "AVOID"
+    if difficulty == "T3":
+        return "BORDERLINE"
+    return "SAFE"
+
+
 def _landing_duration_for_length(length_km: float) -> str:
     if length_km <= 5.5:
         return "Half day"
@@ -399,15 +568,21 @@ def _landing_duration_for_length(length_km: float) -> str:
     return "Full day"
 
 
-def landing_card_from_trail_row(row, image_url: str) -> dict[str, str]:
+def landing_card_from_trail_row(
+    row, image_url: str, image_notice: str = ""
+) -> dict[str, str]:
     """Format one trail row for the discovery landing cards."""
+    trail_id = str(_row_value(row, "id", "") or "")
     length_km = float(_row_value(row, "length_km", 0) or 0)
     difficulty = str(_row_value(row, "difficulty", "T2") or "T2")
+    min_alt_m = int(_row_value(row, "min_alt_m", 0) or 0)
     max_alt_m = int(_row_value(row, "max_alt_m", 0) or 0)
     canton = str(_row_value(row, "canton", "CH") or "CH")
     region = str(_row_value(row, "region", "Swiss Alps") or "Swiss Alps")
     title = str(_row_value(row, "name", "Swiss alpine trail") or "Swiss alpine trail")
     status = _landing_status_for_difficulty(difficulty)
+    verdict = _landing_verdict_for_difficulty(difficulty)
+    ascent = max(0, max_alt_m - min_alt_m)
 
     return {
         "title": title,
@@ -418,8 +593,22 @@ def landing_card_from_trail_row(row, image_url: str) -> dict[str, str]:
         .replace(" ", "-")
         .replace("today", "")
         .strip("-"),
-        "meta": f"{canton} · {region} · {difficulty} · {max_alt_m} m",
+        "meta": (
+            f"{canton} {chr(183)} {region} {chr(183)} "
+            f"{difficulty} {chr(183)} {max_alt_m} m"
+        ),
         "image_url": image_url,
+        "image_notice": image_notice,
+        "trail_id": trail_id,
+        "detail_url": trail_detail_url(row) if trail_id else "#",
+        "difficulty": difficulty,
+        "difficulty_html": difficulty_dots_html(difficulty),
+        "ascent": f"{ascent} m",
+        "time_est": naismith_time(length_km, ascent),
+        "length_value": f"{length_km:.1f} km",
+        "verdict": verdict,
+        "verdict_class": verdict.lower(),
+        "verdict_emoji": VERDICT_EMOJI.get(verdict, ""),
     }
 
 
@@ -465,44 +654,74 @@ def _render_stats_pills(n_trails: int, n_weather: int, has_model: bool) -> None:
     )
 
 
-def _render_hero_card(card: dict[str, str]) -> None:
-    st.markdown(
-        f"""
-        <div class="hero-card">
-          <div class="hero-image" style="background-image:url('{escape(card["image_url"])}');">
-            <div class="hero-card-content">
-              <div>
-                <div class="status {escape(card["status_class"])}">{escape(card["status"])}</div>
-                <h2>{escape(card["title"])}</h2>
-                <div class="card-meta">
-                  <span class="glass-pill">{escape(card["duration"])}</span>
-                  <span class="glass-pill">{escape(card["distance"])}</span>
-                  <span class="glass-pill">{escape(card["meta"])}</span>
-                </div>
-              </div>
-              <div class="arrow-button">→</div>
-            </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+def _render_home_hike_card(card: dict[str, str]) -> None:
+    detail_url = escape(card["detail_url"])
+    title = escape(card["title"])
+    notice_html = (
+        f'<span class="image-notice">{escape(card["image_notice"])}</span>'
+        if card.get("image_notice")
+        else ""
     )
+    pill = (
+        f'<span class="verdict-pill {escape(card["verdict_class"])}">'
+        f'{escape(card["verdict_emoji"])} {escape(card["verdict"])}</span>'
+    )
+    difficulty_html = str(
+        card.get("difficulty_html") or difficulty_dots_html(str(card["difficulty"]))
+    )
+    html = (
+        '<div class="hike-card-link">'
+        '<div class="hike-card">'
+        f'<a class="hike-card-hitbox" href="{detail_url}" aria-label="Open {title}"></a>'
+        f'<div class="hike-card-image" style="background-image:url(\'{escape(card["image_url"])}\');">'
+        f"{notice_html}{pill}"
+        "</div>"
+        '<div class="hike-card-body">'
+        f'<div class="hike-card-title">{title}</div>'
+        '<div class="hike-card-meta">'
+        f"{difficulty_html}"
+        '<div style="margin-top:.45rem;">'
+        f'{escape(card["meta"])}'
+        "</div>"
+        "</div>"
+        '<div class="hike-stats">'
+        "<div>"
+        f'<div class="hike-stat-value">{escape(card["time_est"])}</div>'
+        '<div class="hike-stat-label">Time</div>'
+        "</div>"
+        "<div>"
+        f'<div class="hike-stat-value">{escape(card["ascent"])}</div>'
+        '<div class="hike-stat-label">Ascent</div>'
+        "</div>"
+        "<div>"
+        f'<div class="hike-stat-value">{escape(card["length_value"])}</div>'
+        '<div class="hike-stat-label">Length</div>'
+        "</div>"
+        "</div>"
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _render_hero_card(card: dict[str, str]) -> None:
+    _render_home_hike_card(card)
 
 
 def _render_destination_card(card: dict[str, str]) -> None:
-    st.markdown(
-        f"""
-        <div class="destination-card">
-          <div class="destination-img" style="background-image:url('{escape(card["image_url"])}');"></div>
-          <div class="destination-body">
-            <h3>{escape(card["title"])}</h3>
-            <div class="destination-meta">{escape(card["duration"])} · {escape(card["distance"])} · {escape(card["meta"])}</div>
-            <span class="status {escape(card["status_class"])}">{escape(card["status"])}</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    _render_home_hike_card(card)
+
+
+def _render_feature_card(icon_html: str, title: str, body: str, href: str) -> None:
+    html = (
+        f'<a class="feature-card feature-card-link" href="{escape(href)}">'
+        f'<span class="feature-icon">{icon_html}</span>'
+        f'<span class="feature-title">{escape(title)}</span>'
+        f'<span class="feature-body">{escape(body)}</span>'
+        "</a>"
     )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def initialise_session_state() -> None:
@@ -531,10 +750,19 @@ def render_landing() -> None:
     n_weather = len(db_manager.get_all_weather())
     has_model = trail_classifier.model_exists()
     selected_trails = _select_landing_trails(trails)
-    landing_cards = [
-        landing_card_from_trail_row(trail, LANDING_IMAGES[i % len(LANDING_IMAGES)])
-        for i, trail in enumerate(selected_trails)
-    ]
+    landing_cards = []
+    for trail in selected_trails:
+        image_info = route_image_info(trail)
+        landing_cards.append(
+            landing_card_from_trail_row(
+                trail,
+                str(image_info["url"]),
+                str(image_info["notice"]),
+            )
+        )
+    fallback_image_info = route_image_info(
+        {"name": "Swiss Alps", "canton": "CH", "region": "Alps"}
+    )
     featured = (
         landing_cards[0]
         if landing_cards
@@ -547,7 +775,8 @@ def render_landing() -> None:
                 "max_alt_m": 2400,
                 "length_km": 6.0,
             },
-            LANDING_IMAGES[0],
+            str(fallback_image_info["url"]),
+            str(fallback_image_info["notice"]),
         )
     )
 
@@ -563,15 +792,6 @@ def render_landing() -> None:
               <div class="eyebrow">Swiss Alpine Hiking Condition Forecaster</div>
               <h1 class="hero-title">Discover Swiss Alpine Trails</h1>
               <p class="hero-subtitle">AI-powered hiking condition forecasts for safer alpine decisions</p>
-              <div class="chip-row">
-                <span class="chip active">All</span>
-                <span class="chip">Hiking</span>
-                <span class="chip">Canyoning</span>
-                <span class="chip">Mountaineering</span>
-                <span class="chip">Safe Today</span>
-                <span class="chip">Borderline</span>
-                <span class="chip">Avoid</span>
-              </div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -582,14 +802,14 @@ def render_landing() -> None:
             st.page_link(
                 "pages/1_Find.py",
                 label="Find a hike",
-                icon="🧭",
+                icon="\U0001F9ED",
                 width="stretch",
             )
         with cta_cols[1]:
             st.page_link(
                 "pages/2_Map.py",
                 label="Explore map",
-                icon="🗺️",
+                icon="\U0001F5FA\uFE0F",
                 width="stretch",
             )
     with hero_right:
@@ -614,12 +834,6 @@ def render_landing() -> None:
     for i, card in enumerate(landing_cards[:6]):
         with destination_cols[i % 3]:
             _render_destination_card(card)
-            st.page_link(
-                "pages/1_Find.py",
-                label="Plan this route",
-                icon="🥾",
-                width="stretch",
-            )
 
     st.markdown(
         """
@@ -636,44 +850,34 @@ def render_landing() -> None:
 
     feature_cards = [
         (
-            "🧭",
+            "&compass;",
             "Find a hike",
             "Answer a few trail preferences and get ranked recommendations for your date.",
-            "pages/1_Find.py",
+            "/Find",
         ),
         (
-            "🗺️",
+            "&#128506;",
             "Map",
             "Browse Swiss routes spatially with condition-aware color cues.",
-            "pages/2_Map.py",
+            "/Map",
         ),
         (
-            "🔀",
+            "&#8644;",
             "Compare",
             "Compare two to four routes side by side before committing.",
-            "pages/3_Compare.py",
+            "/Compare",
         ),
         (
-            "ℹ️",
+            "&#8505;",
             "About",
             "Review model status, training tools, metrics, and project context.",
-            "pages/4_About.py",
+            "/About",
         ),
     ]
     feature_cols = st.columns(4, gap="large")
     for col, (icon, title, body, path) in zip(feature_cols, feature_cards):
         with col:
-            st.markdown(
-                f"""
-                <div class="feature-card">
-                  <div class="feature-icon">{escape(icon)}</div>
-                  <h3>{escape(title)}</h3>
-                  <p>{escape(body)}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.page_link(path, label=f"Open {title}", width="stretch")
+            _render_feature_card(escape(icon), title, body, path)
 
 
 def main() -> None:
