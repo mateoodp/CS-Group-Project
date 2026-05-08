@@ -58,6 +58,14 @@ def render_quiz(meta: dict) -> dict | None:
     )
 
     today = date.today()
+    max_date = today + timedelta(days=FORECAST_HORIZON_DAYS)
+    # Remember previously selected date (clamp to valid range in case today shifted).
+    _stored = st.session_state.get("find_answers", {}).get("date")
+    if isinstance(_stored, str):
+        from datetime import datetime as _dt
+        _stored = _dt.fromisoformat(_stored).date()
+    default_date = _stored if isinstance(_stored, date) and today <= _stored <= max_date else today
+
     with st.form("recommend_quiz"):
         c1, c2 = st.columns(2)
         with c1:
@@ -111,9 +119,9 @@ def render_quiz(meta: dict) -> dict | None:
             else:
                 chosen_date = st.date_input(
                     "Date",
-                    value=today,
+                    value=default_date,
                     min_value=today,
-                    max_value=today + timedelta(days=FORECAST_HORIZON_DAYS),
+                    max_value=max_date,
                 )
 
         submitted = st.form_submit_button(

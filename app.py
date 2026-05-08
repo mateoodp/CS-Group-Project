@@ -470,16 +470,23 @@ LANDING_CSS: str = """
     box-shadow: 0 30px 70px rgba(21, 39, 32, .16);
   }
 
+  .feature-header {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin-bottom: .75rem;
+  }
+
   .feature-icon {
-    width: 46px;
-    height: 46px;
-    border-radius: 16px;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
     display: grid;
     place-items: center;
     background: #eef5ea;
     color: var(--pine);
-    font-size: 1.35rem;
-    margin-bottom: 1.05rem;
+    font-size: 1.25rem;
+    flex-shrink: 0;
   }
 
   .feature-card h3,
@@ -488,7 +495,7 @@ LANDING_CSS: str = """
     color: var(--ink);
     font-size: 1.12rem;
     font-weight: 850;
-    margin: 0 0 .55rem;
+    margin: 0;
   }
 
   .feature-card p,
@@ -716,8 +723,10 @@ def _render_destination_card(card: dict[str, str]) -> None:
 def _render_feature_card(icon_html: str, title: str, body: str, href: str) -> None:
     html = (
         f'<a class="feature-card feature-card-link" href="{escape(href)}">'
+        f'<span class="feature-header">'
         f'<span class="feature-icon">{icon_html}</span>'
         f'<span class="feature-title">{escape(title)}</span>'
+        f'</span>'
         f'<span class="feature-body">{escape(body)}</span>'
         "</a>"
     )
@@ -850,25 +859,25 @@ def render_landing() -> None:
 
     feature_cards = [
         (
-            "&compass;",
+            "🧭",
             "Find a hike",
             "Answer a few trail preferences and get ranked recommendations for your date.",
             "/Find",
         ),
         (
-            "&#128506;",
+            "🗺️",
             "Map",
             "Browse Swiss routes spatially with condition-aware color cues.",
             "/Map",
         ),
         (
-            "&#8644;",
+            "↔️",
             "Compare",
             "Compare two to four routes side by side before committing.",
             "/Compare",
         ),
         (
-            "&#8505;",
+            "ℹ️",
             "About",
             "Review model status, training tools, metrics, and project context.",
             "/About",
