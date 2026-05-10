@@ -17,7 +17,7 @@ Data fetched here is written through ``db_manager`` into the
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Optional
 
 import requests
@@ -32,9 +32,10 @@ FORECAST_URL: str = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL: str = "https://archive-api.open-meteo.com/v1/archive"
 GEOADMIN_URL: str = "https://api3.geo.admin.ch/rest/services/all/MapServer/identify"
 
-CACHE_TTL_HOURS: int = 1               # how old live data can be before refetch
-HISTORY_YEARS: int = 2                 # 2 years of archive → ~730 rows/trail
-REQUEST_TIMEOUT_S: int = 15            # seconds before giving up on an API call
+CACHE_TTL_HOURS: int = 1  # how old live data can be before refetch
+HISTORY_YEARS: int = 2  # 2 years of archive → ~730 rows/trail
+REQUEST_TIMEOUT_S: int = 15  # seconds before giving up on an API call
+FORECAST_DAYS: int = 7  # Open-Meteo forecast horizon requested
 
 # Daily variables shared by forecast and archive endpoints.
 _DAILY_VARS: list[str] = [
@@ -53,6 +54,7 @@ _HOURLY_VARS: list[str] = ["freezing_level_height"]
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _get(url: str, params: dict) -> dict:
     """Thin wrapper around ``requests.get`` with timeout and clear errors."""
@@ -80,7 +82,7 @@ def _hourly_to_daily_snowline(hourly: dict) -> dict[str, float]:
     return {d: sum(v) / len(v) for d, v in buckets.items() if v}
 
 
-LAPSE_RATE_C_PER_M: float = 0.0065   # standard environmental lapse rate
+LAPSE_RATE_C_PER_M: float = 0.0065  # standard environmental lapse rate
 
 
 def _estimated_snowline(temp_c: float, point_elevation_m: float) -> float:
@@ -139,6 +141,7 @@ def _daily_block_to_rows(
 # Public API — forecast / archive
 # ---------------------------------------------------------------------------
 
+
 def fetch_forecast(lat: float, lon: float) -> dict:
     """Fetch current + 7-day daily forecast for a coordinate.
 
@@ -156,9 +159,7 @@ def fetch_forecast(lat: float, lon: float) -> dict:
     return _get(FORECAST_URL, params)
 
 
-def fetch_archive(
-    lat: float, lon: float, start: date, end: date
-) -> dict:
+def fetch_archive(lat: float, lon: float, start: date, end: date) -> dict:
     """Fetch historical daily weather between ``start`` and ``end``."""
     params = {
         "latitude": lat,
@@ -192,6 +193,7 @@ def fetch_trail_elevation(lat: float, lon: float) -> Optional[float]:
 # Cache logic
 # ---------------------------------------------------------------------------
 
+
 def refresh_cache(trail_id: int, lat: float, lon: float, force: bool = False) -> int:
     """Refresh the 7-day forecast cache for a trail.
 
@@ -199,7 +201,7 @@ def refresh_cache(trail_id: int, lat: float, lon: float, force: bool = False) ->
     (``< CACHE_TTL_HOURS`` since the most recent ``snapshot_date``), this is
     a no-op unless ``force=True``.
     """
-    if not force:
+    if not force and _forecast_cache_complete(trail_id):
         age_h = db_manager.get_latest_snapshot_age_hours(trail_id)
         if age_h is not None and age_h < CACHE_TTL_HOURS:
             return 0
@@ -210,6 +212,15 @@ def refresh_cache(trail_id: int, lat: float, lon: float, force: bool = False) ->
     rows = _daily_block_to_rows(trail_id, data.get("daily", {}), snowline, elev)
     db_manager.upsert_weather_snapshots_bulk(rows)
     return len(rows)
+
+
+def _forecast_cache_complete(trail_id: int) -> bool:
+    """Return True when all requested forecast days are cached for a trail."""
+    today = date.today()
+    return all(
+        db_manager.get_weather_for_date(trail_id, today + timedelta(days=i)) is not None
+        for i in range(FORECAST_DAYS)
+    )
 
 
 def seed_historical_weather(
@@ -237,5 +248,7 @@ def seed_historical_weather(
 if __name__ == "__main__":
     print("Fetching forecast for Säntis (47.2493, 9.3432)…")
     data = fetch_forecast(47.2493, 9.3432)
-    print({k: v for k, v in data.items() if k in ("latitude", "longitude", "elevation")})
+    print(
+        {k: v for k, v in data.items() if k in ("latitude", "longitude", "elevation")}
+    )
     print("Daily keys:", list(data.get("daily", {}).keys()))

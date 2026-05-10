@@ -23,11 +23,13 @@ from data import db_manager
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
 from utils.sidebar import render_shared_sidebar
+from utils.theme import apply_app_theme, page_hero, section_heading, stat_pills_html
 from utils.topnav import render_top_nav
-from utils.trail_detail import difficulty_dots_html
 
 st.set_page_config(
-    page_title=f"Compare · {APP_TITLE}", page_icon="🔀", layout="wide",
+    page_title=f"Compare · {APP_TITLE}",
+    page_icon="🔀",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
@@ -64,8 +66,19 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
 
     # Pre-seed the multiselect from session state (e.g. when arriving via
     # a "Compare with…" button from the Trail Detail page).
-    options = {f"{t['name']}  ·  {t['canton']}  ·  {t['difficulty']}": t["id"]
-               for t in all_trails}
+    st.markdown(
+        section_heading(
+            "Build your shortlist",
+            "Choose a date and compare two to four candidate hikes under the same forecast window.",
+            "Side-by-side planning",
+        ),
+        unsafe_allow_html=True,
+    )
+
+    options = {
+        f"{t['name']}  ·  {t['canton']}  ·  {t['difficulty']}": t["id"]
+        for t in all_trails
+    }
     label_for_id = {tid: lbl for lbl, tid in options.items()}
 
     preselected_label = None
@@ -98,7 +111,14 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
 
 
 def render_bar_chart(rows: list[dict]) -> None:
-    st.subheader("📊 Predicted risk for the chosen date")
+    st.markdown(
+        section_heading(
+            "Predicted risk",
+            "Lower is better: SAFE sits at the calmer end of the scale, AVOID at the stop-sign end.",
+            "Model verdict",
+        ),
+        unsafe_allow_html=True,
+    )
     if not rows:
         return
     df = pd.DataFrame(rows)
@@ -115,6 +135,8 @@ def render_bar_chart(rows: list[dict]) -> None:
         )
     )
     fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         height=380,
         margin=dict(l=10, r=10, t=10, b=10),
         yaxis=dict(
@@ -125,11 +147,18 @@ def render_bar_chart(rows: list[dict]) -> None:
         ),
         xaxis_title="",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_radar_chart(rows: list[dict]) -> None:
-    st.subheader("🕸️ Weather profile")
+    st.markdown(
+        section_heading(
+            "Weather profile",
+            "Normalized indicators show why routes with similar grades can diverge on the same day.",
+            "Forecast shape",
+        ),
+        unsafe_allow_html=True,
+    )
     if not rows:
         return
     fig = go.Figure()
@@ -143,48 +172,82 @@ def render_radar_chart(rows: list[dict]) -> None:
                 normed.append(0)
             else:
                 normed.append(max(0, min(1, (val - lo) / (hi - lo))) * 100)
-        fig.add_trace(go.Scatterpolar(
-            r=normed + [normed[0]],
-            theta=categories + [categories[0]],
-            fill="toself",
-            name=r["name"],
-        ))
+        fig.add_trace(
+            go.Scatterpolar(
+                r=normed + [normed[0]],
+                theta=categories + [categories[0]],
+                fill="toself",
+                name=r["name"],
+            )
+        )
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        paper_bgcolor="rgba(0,0,0,0)",
         height=420,
         margin=dict(l=10, r=10, t=10, b=10),
         legend=dict(orientation="h", y=-0.15),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_summary_table(rows: list[dict], target_date) -> None:
-    st.subheader("🔢 Numbers side-by-side")
+    st.markdown(
+        section_heading(
+            "Numbers side by side",
+            "The raw weather and route attributes behind the visual comparison.",
+            "Decision table",
+        ),
+        unsafe_allow_html=True,
+    )
     if not rows:
         return
     table = []
     for r in rows:
         snap = r["snapshot"] or {}
-        table.append({
-            "Trail": r["name"],
-            "Grade": r["difficulty"],
-            "Verdict": f"{VERDICT_EMOJI[r['verdict']]} {r['verdict']}",
-            "Confidence": f"{r['confidence']:.0%}",
-            "Temp °C": f"{snap.get('temp_c', 0):.1f}" if snap.get("temp_c") is not None else "—",
-            "Wind km/h": f"{snap.get('wind_kmh', 0):.0f}" if snap.get("wind_kmh") is not None else "—",
-            "Precip mm": f"{snap.get('precip_mm', 0):.1f}" if snap.get("precip_mm") is not None else "—",
-            "Snowline m": f"{snap.get('snowline_m', 0):.0f}" if snap.get("snowline_m") is not None else "—",
-            "Trail max m": r["max_alt_m"],
-        })
-    st.dataframe(pd.DataFrame(table), use_container_width=True, hide_index=True)
+        table.append(
+            {
+                "Trail": r["name"],
+                "Grade": r["difficulty"],
+                "Verdict": f"{VERDICT_EMOJI[r['verdict']]} {r['verdict']}",
+                "Confidence": f"{r['confidence']:.0%}",
+                "Temp °C": (
+                    f"{snap.get('temp_c', 0):.1f}"
+                    if snap.get("temp_c") is not None
+                    else "—"
+                ),
+                "Wind km/h": (
+                    f"{snap.get('wind_kmh', 0):.0f}"
+                    if snap.get("wind_kmh") is not None
+                    else "—"
+                ),
+                "Precip mm": (
+                    f"{snap.get('precip_mm', 0):.1f}"
+                    if snap.get("precip_mm") is not None
+                    else "—"
+                ),
+                "Snowline m": (
+                    f"{snap.get('snowline_m', 0):.0f}"
+                    if snap.get("snowline_m") is not None
+                    else "—"
+                ),
+                "Trail max m": r["max_alt_m"],
+            }
+        )
+    st.dataframe(pd.DataFrame(table), width="stretch", hide_index=True)
 
-    st.markdown("##### Open a trail's detail page")
+    st.markdown(
+        section_heading(
+            "Open a trail detail page",
+            "Jump from comparison into the full route page for maps, hazards and photos.",
+        ),
+        unsafe_allow_html=True,
+    )
     cols = st.columns(len(rows))
     for col, r in zip(cols, rows):
         if col.button(
             f"🏔️ {r['name']}",
             key=f"compare_open_{r['trail_id']}",
-            use_container_width=True,
+            width="stretch",
         ):
             st.session_state["selected_trail_id"] = r["trail_id"]
             st.session_state["selected_date"] = target_date
@@ -194,11 +257,15 @@ def render_summary_table(rows: list[dict], target_date) -> None:
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
+    apply_app_theme()
 
-    st.title("🔀 Compare trails")
-    st.caption(
-        "Pit two to four trails against each other for the same day. "
-        "Switch the date to see how the same hikes look later in the week."
+    st.markdown(
+        page_hero(
+            "Compare trails",
+            "Pit two to four routes against each other for the same day, then open the strongest candidate for full route detail.",
+            "Route comparison",
+        ),
+        unsafe_allow_html=True,
     )
 
     all_trails = db_manager.get_all_trails()
@@ -224,21 +291,36 @@ def main() -> None:
             verdict, conf, _, _ = predictions.predict_for_snapshot(
                 snap, trail["max_alt_m"]
             )
-            verdict, caveats = predictions.adjust_verdict(
-                verdict, trail, snap, risk
-            )
+            verdict, caveats = predictions.adjust_verdict(verdict, trail, snap, risk)
         for c in caveats:
             aggregated_caveats.append((trail["name"], c))
-        rows.append({
-            "trail_id": tid,
-            "name": trail["name"],
-            "difficulty": trail["difficulty"],
-            "max_alt_m": trail["max_alt_m"],
-            "verdict": verdict if verdict != "—" else "BORDERLINE",
-            "confidence": conf,
-            "risk_score": VERDICT_SCORE.get(verdict, 2),
-            "snapshot": snap,
-        })
+        rows.append(
+            {
+                "trail_id": tid,
+                "name": trail["name"],
+                "difficulty": trail["difficulty"],
+                "max_alt_m": trail["max_alt_m"],
+                "verdict": verdict if verdict != "—" else "BORDERLINE",
+                "confidence": conf,
+                "risk_score": VERDICT_SCORE.get(verdict, 2),
+                "snapshot": snap,
+            }
+        )
+
+    verdict_counts = {}
+    for row in rows:
+        verdict_counts[row["verdict"]] = verdict_counts.get(row["verdict"], 0) + 1
+    st.markdown(
+        stat_pills_html(
+            [
+                ("selected routes", len(rows)),
+                ("safe", verdict_counts.get("SAFE", 0)),
+                ("borderline", verdict_counts.get("BORDERLINE", 0)),
+                ("avoid", verdict_counts.get("AVOID", 0)),
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
     for trail_name, caveat in aggregated_caveats:
         st.warning(f"⚠️ **{trail_name}** — {caveat}")

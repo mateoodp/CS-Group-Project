@@ -12,6 +12,7 @@ altitude) and picks a date within the 7-day forecast horizon. The page:
 
 from __future__ import annotations
 
+from html import escape
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
@@ -20,13 +21,23 @@ import streamlit as st
 
 from data import db_manager, weather_fetcher
 from utils import predictions
-from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
+from utils.constants import APP_TITLE, VERDICT_EMOJI
 from utils.sidebar import render_shared_sidebar
+from utils.theme import (
+    apply_app_theme,
+    image_for_index,
+    page_hero,
+    section_heading,
+    stat_pills_html,
+    status_class,
+)
 from utils.topnav import render_top_nav
 from utils.trail_detail import difficulty_dots_html, naismith_time
 
 st.set_page_config(
-    page_title=f"Find · {APP_TITLE}", page_icon="🧭", layout="wide",
+    page_title=f"Find · {APP_TITLE}",
+    page_icon="🧭",
+    layout="wide",
     initial_sidebar_state="collapsed",
 )
 
@@ -38,8 +49,12 @@ FORECAST_HORIZON_DAYS: int = 6
 def render_quiz(meta: dict) -> dict | None:
     """Render the 5-question quiz + date picker. Return answers on submit."""
     st.markdown(
-        "Answer a few questions and we'll rank the best Swiss hikes for your "
-        "chosen day, blending **your preferences** with the **weather forecast**."
+        section_heading(
+            "Tune your trail day",
+            "Filter by region, grade, distance and altitude. The ranking still uses the same forecast and model logic underneath.",
+            "Personalized search",
+        ),
+        unsafe_allow_html=True,
     )
 
     today = date.today()
@@ -51,26 +66,29 @@ def render_quiz(meta: dict) -> dict | None:
         c1, c2 = st.columns(2)
         with c1:
             cantons = st.multiselect(
-                "1) Which cantons are OK?",
+                "Cantons",
                 options=meta["cantons"],
-                help="Leave empty to allow any canton.",
+                placeholder="Any canton",
+                help="Leave empty to search all Swiss cantons.",
                 key=f"quiz_cantons_{v}",
             )
             regions = st.multiselect(
-                "2) Which regions?",
+                "Regions",
                 options=meta["regions"],
+                placeholder="Any region",
                 help="Alps · Pre-Alps · Jura · Mittelland. Empty = all.",
                 key=f"quiz_regions_{v}",
             )
             difficulties = st.multiselect(
-                "3) Difficulty (SAC scale)",
+                "SAC grade",
                 options=meta["difficulties"],
+                placeholder="Any grade",
                 help="T1 = strolling · T6 = serious alpine. Empty = all.",
                 key=f"quiz_difficulties_{v}",
             )
         with c2:
             length_lo, length_hi = st.slider(
-                "4) Length range (km)",
+                "Distance",
                 min_value=float(int(meta["min_length_km"])),
                 max_value=float(int(meta["max_length_km"]) + 1),
                 value=(
@@ -79,17 +97,19 @@ def render_quiz(meta: dict) -> dict | None:
                 ),
                 step=0.5,
                 key=f"quiz_length_{v}",
+                help="Route length in kilometres.",
             )
             alt_lo, alt_hi = st.slider(
-                "5) Max altitude range (m)",
+                "Highest point",
                 min_value=int(meta["min_max_alt_m"]),
                 max_value=int(meta["max_max_alt_m"]),
                 value=(int(meta["min_max_alt_m"]), int(meta["max_max_alt_m"])),
                 step=50,
                 key=f"quiz_alt_{v}",
+                help="Maximum altitude reached by the trail.",
             )
             mode = st.radio(
-                "When?",
+                "Date window",
                 ["Today", "Pick a date"],
                 horizontal=True,
                 help=f"Forecasts cover today + the next {FORECAST_HORIZON_DAYS} days.",
@@ -126,8 +146,8 @@ def render_quiz(meta: dict) -> dict | None:
     }
 
 
-PARALLEL_WORKERS: int = 8     # how many trails we fetch in parallel
-MAX_FETCH_RETRIES: int = 1    # retry once on failure (so total: 2 attempts)
+PARALLEL_WORKERS: int = 8  # how many trails we fetch in parallel
+MAX_FETCH_RETRIES: int = 1  # retry once on failure (so total: 2 attempts)
 
 
 def _ensure_snapshot(trail, target_date: date) -> tuple[dict | None, str | None]:
@@ -146,7 +166,9 @@ def _ensure_snapshot(trail, target_date: date) -> tuple[dict | None, str | None]
     for attempt in range(MAX_FETCH_RETRIES + 1):
         try:
             weather_fetcher.refresh_cache(
-                trail["id"], trail["lat"], trail["lon"],
+                trail["id"],
+                trail["lat"],
+                trail["lon"],
                 force=(attempt > 0),
             )
             snap = db_manager.get_weather_for_date(trail["id"], target_date)
@@ -155,8 +177,10 @@ def _ensure_snapshot(trail, target_date: date) -> tuple[dict | None, str | None]
         except Exception as e:
             last_err = e
 
-    err = f"{last_err.__class__.__name__}: {last_err}" if last_err else (
-        f"forecast covers today + 6 days; date {target_date} is out of range"
+    err = (
+        f"{last_err.__class__.__name__}: {last_err}"
+        if last_err
+        else (f"forecast covers today + 6 days; date {target_date} is out of range")
     )
     return None, err
 
@@ -208,9 +232,7 @@ def _score_all_parallel(candidates, target_date: date, risk: int) -> list[dict]:
     )
     done = 0
     with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
-        futures = {
-            ex.submit(_score_trail, t, target_date, risk): t for t in candidates
-        }
+        futures = {ex.submit(_score_trail, t, target_date, risk): t for t in candidates}
         for fut in as_completed(futures):
             results.append(fut.result())
             done += 1
@@ -239,6 +261,17 @@ def render_results(results: list[dict], target_date: date) -> None:
         f"🟢 {summary['SAFE']} · 🟠 {summary['BORDERLINE']} · "
         f"🔴 {summary['AVOID']} · ⚪ {summary['—']}"
     )
+    st.markdown(
+        stat_pills_html(
+            [
+                ("safe", summary["SAFE"]),
+                ("borderline", summary["BORDERLINE"]),
+                ("avoid", summary["AVOID"]),
+                ("no data", summary["—"]),
+            ]
+        ),
+        unsafe_allow_html=True,
+    )
 
     # Surface failed fetches loudly — never silently degrade to "no data".
     failed = [r for r in results if r.get("error")]
@@ -257,22 +290,33 @@ def render_results(results: list[dict], target_date: date) -> None:
             for e in sample_errors:
                 st.code(e)
             st.markdown("**Affected trails:**")
-            st.write(", ".join(r["trail"]["name"] for r in failed[:30])
-                     + ("…" if len(failed) > 30 else ""))
+            st.write(
+                ", ".join(r["trail"]["name"] for r in failed[:30])
+                + ("…" if len(failed) > 30 else "")
+            )
 
-    st.subheader(f"🏆 Top {min(TOP_N, len(results))} hikes")
-    st.caption("Tap any card to open the full route, weather breakdown, "
-               "tricky parts, and photos.")
+    st.markdown(
+        section_heading(
+            f"Top {min(TOP_N, len(results))} hikes",
+            "Open any recommendation for the route map, weather breakdown, tricky parts, photos and reports.",
+            "Ranked recommendations",
+        ),
+        unsafe_allow_html=True,
+    )
     st.markdown(_CARD_CSS, unsafe_allow_html=True)
     top = results[:TOP_N]
 
-    for r in top:
-        _render_result_card(r, target_date)
+    cols = st.columns(3, gap="large")
+    for i, r in enumerate(top):
+        with cols[i % 3]:
+            _render_result_card(r, target_date, image_index=i)
 
     if len(results) > TOP_N:
         with st.expander(f"Show the other {len(results) - TOP_N} matches"):
-            for r in results[TOP_N:]:
-                _render_result_card(r, target_date, compact=True)
+            tail_cols = st.columns(3, gap="large")
+            for i, r in enumerate(results[TOP_N:]):
+                with tail_cols[i % 3]:
+                    _render_result_card(r, target_date, compact=True, image_index=i)
 
 
 # ---------------------------------------------------------------------------
@@ -284,57 +328,89 @@ _CARD_CSS: str = """
 <style>
   .hike-card {
     background: #ffffff;
-    border: 1px solid #e6e8eb;
-    border-radius: 14px;
-    padding: 16px 18px;
-    margin-bottom: 12px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    border: 1px solid rgba(20, 32, 28, .07);
+    border-radius: 28px;
+    padding: .72rem;
+    margin-bottom: .65rem;
+    box-shadow: 0 18px 42px rgba(21, 39, 32, .08);
+  }
+  .hike-card-image {
+    height: 210px;
+    border-radius: 22px;
+    background-size: cover;
+    background-position: center;
+    margin-bottom: 1rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .hike-card-image::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,.04), rgba(0,0,0,.38));
+  }
+  .hike-card-image .verdict-pill {
+    position: absolute;
+    left: .85rem;
+    bottom: .85rem;
+    z-index: 1;
+    margin-left: 0;
+  }
+  .hike-card-body {
+    padding: 0 .35rem .4rem;
   }
   .hike-card-title {
-    font-size: 1.08rem;
-    font-weight: 700;
-    color: #1a1a1a;
+    font-size: 1.18rem;
+    font-weight: 850;
+    color: #14201c;
     line-height: 1.3;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
   }
   .hike-card-meta {
     font-size: 0.85rem;
     color: #6b7177;
-    margin-bottom: 14px;
+    margin-bottom: .75rem;
+    min-height: 2.4rem;
   }
   .hike-stats {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 18px;
-    border-top: 1px solid #f0f1f3;
+    gap: 10px;
+    border-top: 1px solid #edf0ed;
     padding-top: 12px;
   }
   .hike-stat-value {
-    font-size: 1.05rem;
-    font-weight: 600;
-    color: #1a1a1a;
+    font-size: .98rem;
+    font-weight: 850;
+    color: #14201c;
   }
   .hike-stat-label {
-    font-size: 0.78rem;
-    color: #8b9197;
+    font-size: 0.72rem;
+    color: #6b756f;
     margin-top: 2px;
+    font-weight: 800;
+    text-transform: uppercase;
   }
   .verdict-pill {
     display: inline-block;
-    padding: 3px 10px;
+    padding: 5px 11px;
     border-radius: 999px;
     font-size: 0.78rem;
-    font-weight: 600;
+    font-weight: 850;
     color: white;
     vertical-align: middle;
     margin-left: 8px;
   }
+  .verdict-pill.safe { background:#5f9f45; }
+  .verdict-pill.borderline { background:#c9851e; }
+  .verdict-pill.avoid { background:#b7473f; }
+  .verdict-pill.unknown { background:#7c8580; }
   .safety-note {
     margin-top: 12px;
     padding: 8px 12px;
     background: #fff7ed;
     border-left: 3px solid #C0392B;
-    border-radius: 4px;
+    border-radius: 12px;
     font-size: 0.84rem;
     color: #5a3a1a;
   }
@@ -342,19 +418,23 @@ _CARD_CSS: str = """
 """
 
 
-def _render_result_card(r: dict, target_date, compact: bool = False) -> None:
-    """Render one trail as a clean white card with a 'View details' button."""
+def _render_result_card(
+    r: dict,
+    target_date,
+    compact: bool = False,
+    image_index: int = 0,
+) -> None:
+    """Render one trail as a discovery image card with a detail button."""
     trail = r["trail"]
     verdict = r["adjusted"]
-    colour = VERDICT_COLOURS.get(verdict, "#888888")
     emoji = VERDICT_EMOJI.get(verdict, "⚪")
 
     ascent = trail["max_alt_m"] - trail["min_alt_m"]
     time_est = naismith_time(trail["length_km"], ascent)
 
     pill = (
-        f"<span class='verdict-pill' style='background:{colour};'>"
-        f"{emoji} {verdict}"
+        f"<span class='verdict-pill {status_class(verdict)}'>"
+        f"{escape(emoji)} {escape(verdict)}"
         f"</span>"
     )
 
@@ -362,64 +442,70 @@ def _render_result_card(r: dict, target_date, compact: bool = False) -> None:
     if r.get("caveats"):
         caveat_html = (
             f"<div class='safety-note'>⚠️ <b>Safety note:</b> "
-            f"{r['caveats'][0]}</div>"
+            f"{escape(r['caveats'][0])}</div>"
         )
 
     snap = r.get("snapshot") or {}
     weather_chip = ""
     if snap.get("temp_c") is not None and snap.get("wind_kmh") is not None:
         weather_chip = (
-            f"<span style='color:#6b7177; font-size:0.85rem; margin-left:auto;'>"
+            f"<span style='color:#6b7177;'>"
             f"🌡️ {snap['temp_c']:.0f}°C · 💨 {snap['wind_kmh']:.0f} km/h"
             f"</span>"
         )
 
-    info_col, btn_col = st.columns([5, 1])
-    with info_col:
-        st.markdown(
-            f"""
-            <div class="hike-card">
-              <div class="hike-card-title">
-                {trail['name']} {pill}
+    st.markdown(
+        f"""
+        <div class="hike-card">
+          <div class="hike-card-image" style="background-image:url('{escape(image_for_index(image_index))}');">
+            {pill}
+          </div>
+          <div class="hike-card-body">
+            <div class="hike-card-title">{escape(trail['name'])}</div>
+            <div class="hike-card-meta">
+              {difficulty_dots_html(trail['difficulty'])}
+              <div style="margin-top:.45rem;">
+                {escape(trail['canton'])} · {escape(trail['region'])} · {weather_chip}
               </div>
-              <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-                {difficulty_dots_html(trail['difficulty'])}
-                <span style="color:#6b7177; font-size:0.85rem;">
-                  · {trail['canton']} · {trail['region']}
-                </span>
-                {weather_chip}
-              </div>
-              <div class="hike-stats">
-                <div>
-                  <div class="hike-stat-value">{time_est}</div>
-                  <div class="hike-stat-label">Estimated time</div>
-                </div>
-                <div>
-                  <div class="hike-stat-value">{ascent} m</div>
-                  <div class="hike-stat-label">Ascent</div>
-                </div>
-                <div>
-                  <div class="hike-stat-value">{trail['length_km']} km</div>
-                  <div class="hike-stat-label">Length</div>
-                </div>
-              </div>
-              {caveat_html}
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with btn_col:
-        key = f"detail_{'tail_' if compact else ''}{trail['id']}"
-        if st.button("View details", key=key, use_container_width=True):
-            st.session_state["selected_trail_id"] = trail["id"]
-            st.session_state["selected_date"] = target_date
-            st.switch_page("pages/Trail_Detail.py")
+            <div class="hike-stats">
+              <div>
+                <div class="hike-stat-value">{escape(time_est)}</div>
+                <div class="hike-stat-label">Time</div>
+              </div>
+              <div>
+                <div class="hike-stat-value">{ascent} m</div>
+                <div class="hike-stat-label">Ascent</div>
+              </div>
+              <div>
+                <div class="hike-stat-value">{trail['length_km']} km</div>
+                <div class="hike-stat-label">Length</div>
+              </div>
+            </div>
+            {caveat_html}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    key = f"detail_{'tail_' if compact else ''}{trail['id']}"
+    if st.button("View details", key=key, width="stretch"):
+        st.session_state["selected_trail_id"] = trail["id"]
+        st.session_state["selected_date"] = target_date
+        st.switch_page("pages/Trail_Detail.py")
 
 
 def render_recent_community_feed() -> None:
     """Bottom-of-page community section: most recent hiker reports."""
     st.divider()
-    st.subheader("🗣️ Recent reports from hikers")
+    st.markdown(
+        section_heading(
+            "Recent reports from hikers",
+            "Community reports become training signal the next time the model is retrained.",
+            "Trail notes",
+        ),
+        unsafe_allow_html=True,
+    )
     rows = db_manager.get_recent_user_reports(limit=6)
     if not rows:
         st.caption(
@@ -441,20 +527,24 @@ def render_recent_community_feed() -> None:
 
 def _answers_signature(answers: dict) -> str:
     """Stable hash of quiz answers — used to invalidate cached results."""
-    serialisable = {k: (v.isoformat() if isinstance(v, date) else v)
-                    for k, v in answers.items()}
+    serialisable = {
+        k: (v.isoformat() if isinstance(v, date) else v) for k, v in answers.items()
+    }
     return json.dumps(serialisable, sort_keys=True, default=str)
 
 
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
+    apply_app_theme()
 
-    st.title("🧭 Find my best hike")
-    st.caption(
-        "Tell us what kind of day you want and when. We'll cross-reference "
-        "your preferences with the live weather forecast and rank the hikes "
-        "that match — safest first."
+    st.markdown(
+        page_hero(
+            "Find my best hike",
+            "Tell us what kind of day you want and when. We cross-reference your preferences with the live weather forecast and rank matching hikes safest first.",
+            "AI trail finder",
+        ),
+        unsafe_allow_html=True,
     )
 
     meta = db_manager.get_trail_metadata()
@@ -476,7 +566,7 @@ def main() -> None:
     answers = st.session_state.get("find_answers")
     if answers is None:
         st.info(
-            "👆 Fill in the quiz and hit **Find my best hikes** to see your "
+            "👆 Fill in the filters and hit **Find matching hikes** to see your "
             "ranked recommendations."
         )
         render_recent_community_feed()
