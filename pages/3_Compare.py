@@ -19,7 +19,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from data import db_manager
+from data import db_manager, weather_fetcher
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
 from utils.sidebar import render_shared_sidebar
@@ -52,8 +52,11 @@ def _snapshot_for(trail, target_date):
     snap = db_manager.get_weather_for_date(trail["id"], target_date)
     if snap is not None:
         return dict(snap)
+    # Specific date missing — force a refresh even if cache is "fresh".
     try:
-        predictions.ensure_forecast_for_trail(trail)
+        weather_fetcher.refresh_cache(
+            trail["id"], trail["lat"], trail["lon"], force=True
+        )
     except Exception:
         return None
     snap = db_manager.get_weather_for_date(trail["id"], target_date)
@@ -88,11 +91,17 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
 
     c1, c2 = st.columns([1, 3])
     with c1:
+        max_date = today + timedelta(days=FORECAST_HORIZON_DAYS)
+        _stored = st.session_state.get("compare_date")
+        if isinstance(_stored, str):
+            from datetime import datetime as _dt
+            _stored = _dt.fromisoformat(_stored).date()
+        default_date = _stored if isinstance(_stored, date) and today <= _stored <= max_date else today
         chosen_date = st.date_input(
             "Date to compare",
-            value=st.session_state.get("compare_date") or today,
+            value=default_date,
             min_value=today,
-            max_value=today + timedelta(days=FORECAST_HORIZON_DAYS),
+            max_value=max_date,
         )
         st.session_state["compare_date"] = chosen_date
     with c2:

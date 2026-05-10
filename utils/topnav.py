@@ -38,12 +38,7 @@ _NAV_CSS: str = """
   }
 
   .nav-brand {
-    color: #14201c;
-    font-weight: 850;
-    font-size: 1.05rem;
-    letter-spacing: 0;
-    padding: .55rem 0 .25rem;
-    white-space: nowrap;
+    margin-top: 0;
   }
 
   div[data-testid="stPageLink"] a {
@@ -85,9 +80,11 @@ def render_top_nav() -> None:
 
     cols = st.columns([2] + [1] * len(NAV_ENTRIES), gap="small")
     with cols[0]:
-        st.markdown(
-            "<div class='nav-brand'>Swiss Hike Forecaster</div>",
-            unsafe_allow_html=True,
+        st.page_link(
+            "app.py",
+            label="Swiss Hike Forecaster",
+            icon="🏔️",
+            width="stretch",
         )
     for col, (path, label, icon) in zip(cols[1:], NAV_ENTRIES):
         with col:
