@@ -1,7 +1,9 @@
 """Shared constants for the Swiss Alpine Hiking Condition Forecaster.
 
-Owner: shared — edits welcome from any teammate. Keep docstrings up to date
-so the "single source of truth" principle is obvious to graders (Criterion 6).
+Owner: shared. Anyone on the team can edit this file. Whenever a new
+constant is added, please update the docstring so it's clear what it
+means. Keeping this file as the single source of truth is one of our
+graded points (Criterion 6).
 """
 
 # =============================================================================
@@ -32,8 +34,9 @@ SUBMISSION_DEADLINE: Final[str] = "2026-05-14"
 # Verdict colours (used by map markers and cards)
 # ---------------------------------------------------------------------------
 
-# Traffic-light palette mapped to the three verdict labels. Used both in the
-# Folium markers and the CSS pill components for consistency across the app.
+# Traffic light colors mapped to our three verdict labels. We use the same
+# three colors everywhere (map bubbles, card pills, table cells) so the
+# user only has to learn the meaning once.
 VERDICT_COLOURS: Final[dict[str, str]] = {
     "SAFE": "#1E7B3A",       # green
     "BORDERLINE": "#E69F00", # amber
@@ -60,9 +63,9 @@ DEFAULT_RISK_TOLERANCE: Final[int] = 3
 # Map
 # ---------------------------------------------------------------------------
 
-# Approximate geographic centre of Switzerland - used to centre the Folium map
-# when no trail is selected. Coordinates verified against Swiss topo references.
-# Centre of Switzerland - used when initialising the Folium map.
+# Approximate center of Switzerland in latitude / longitude. We use these
+# to center the Folium map when the user hasn't picked a canton yet. The
+# coordinates were checked against Swisstopo references.
 CH_CENTRE_LAT: Final[float] = 46.8182
 CH_CENTRE_LON: Final[float] = 8.2275
 DEFAULT_MAP_ZOOM: Final[int] = 8

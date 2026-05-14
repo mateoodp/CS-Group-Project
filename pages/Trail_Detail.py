@@ -1,21 +1,23 @@
-"""Trail Detail — the deep page for a single hike on a single date.
+"""Trail Detail page. The deep dive for a single hike on a single date.
 
-Reads ``selected_trail_id`` (and optionally ``selected_date``) from
-``st.session_state``. The page is reachable only by clicking a hike from
-Find / Map / Compare — it doesn't appear in the top nav.
+This page reads ``selected_trail_id`` (and sometimes ``selected_date``)
+from ``st.session_state``. The user gets here by clicking on a trail
+card from Find, Map or Compare. It is not in the top navigation on
+purpose, so there's no way to reach it without first picking a trail.
 
-Layout:
+Page layout from top to bottom:
 
-    1. Hero card: trail name, SAC dots, 4-stat row, verdict chip.
-    2. In-page date picker + "Compare with another trail" CTA.
+    1. Hero card with the trail name, SAC difficulty dots, four key
+       stats, and the colored verdict chip.
+    2. A date picker plus a "Compare with another trail" button.
     3. Five tabs:
-        * Overview     — at-a-glance metrics and the day's snapshot.
-        * Route map    — topo tiles, blue route, hazard diamonds.
-        * Tricky parts — rule-based hazard cards.
-        * Weather      — verdict explanation + Top/Bottom panel +
-                         7-day cards + best-day banner + timeline.
-        * Photos       — Wikimedia Commons.
-    4. Bottom: the "submit a trail report" form (was on Map).
+        * Overview: quick stats and the weather snapshot for the day.
+        * Route map: topographic map with a blue loop and hazard diamonds.
+        * Tricky parts: rule-based cards highlighting safety concerns.
+        * Weather: detailed verdict explanation, top vs bottom of trail,
+                   7-day forecast cards, best-day banner, and a timeline.
+        * Photos: free-licence photos pulled from Wikimedia Commons.
+    4. At the bottom, a form to submit a personal trail report.
 """
 # =============================================================================
 # Source attribution
@@ -70,8 +72,9 @@ FORECAST_HORIZON_DAYS: int = 6
 # Hero header
 # ---------------------------------------------------------------------------
 
-# Custom CSS for the hero card, verdict chip and altitude cards.
-# Injected with unsafe_allow_html=True via the helper below.
+# Custom CSS that styles the hero card at the top, the floating verdict
+# chip, and the altitude cards used inside the weather tab. Streamlit
+# lets us inject CSS as a string when we set unsafe_allow_html=True.
 _DETAIL_CSS: str = """
 <style>
   .trail-hero {
@@ -131,14 +134,17 @@ _DETAIL_CSS: str = """
 """
 
 
-# Renders the big "hero" card at the top of the page: name, SAC dots,
-# the four-stat grid (time, ascent, length, max altitude) and the verdict chip.
+# Build the big card at the top of the page. It shows the trail name,
+# the SAC difficulty dots, four key stats (time, climb, length, max
+# altitude) and the colored verdict chip floating on the right.
 def render_header(trail, verdict_data: dict, target_date) -> None:
-    # Look up colour + emoji for the verdict, defaulting to a neutral grey/dot.
+    # Pick the color and emoji that match this verdict. If the verdict is
+    # missing or unknown we fall back to grey and a white circle dot.
     colour = VERDICT_COLOURS.get(verdict_data["adjusted"], "#888888")
     emoji = VERDICT_EMOJI.get(verdict_data["adjusted"], "⚪")
     ascent = trail["max_alt_m"] - trail["min_alt_m"]
-    # Naismith's rule: rough walking time from distance and ascent.
+    # Naismith's rule is a classic hiker formula for walking time, based on
+    # the distance and how much you climb. It's only a rough estimate.
     time_est = naismith_time(trail["length_km"], ascent)
 
     st.markdown(_DETAIL_CSS, unsafe_allow_html=True)
@@ -183,10 +189,15 @@ def render_header(trail, verdict_data: dict, target_date) -> None:
 
 
 def render_action_bar(trail, target_date) -> date:
-    """Date picker + Compare-with + Back-to-Find. Returns chosen date."""
+    """Show the row of controls right under the hero card.
+
+    From left to right: a date picker, a "Compare with..." button, a
+    "Find more hikes" link, and a "Back to map" link. Returns the date
+    the user picked in the date input.
+    """
     today = date.today()
     # Streamlit pattern - https://docs.streamlit.io
-    # Four columns: date picker, compare button, find-link, back-to-map link.
+    # Four columns side by side, one widget per column.
     bar_cols = st.columns([1.5, 1.5, 1, 1])
 
     with bar_cols[0]:
@@ -207,7 +218,8 @@ def render_action_bar(trail, target_date) -> date:
             help=f"Opens Compare with {trail['name']} preselected.",
         ):
             # Streamlit pattern - https://docs.streamlit.io
-            # Hand off the current trail and date to the Compare page via session state.
+            # Save the current trail and date in session state so the
+            # Compare page can pick them up after we switch over to it.
             st.session_state["compare_seed_trail_id"] = trail["id"]
             st.session_state["compare_date"] = chosen
             st.switch_page("pages/3_Compare.py")
@@ -232,7 +244,8 @@ def render_action_bar(trail, target_date) -> date:
 # ---------------------------------------------------------------------------
 
 
-# Overview tab: four core route metrics on top, then the day's weather snapshot.
+# Overview tab. Shows four basic route stats at the top, then the
+# weather snapshot for the chosen date below.
 def tab_overview(trail, snapshot, verdict, conf, source) -> None:
     st.markdown(
         section_heading(
@@ -243,7 +256,8 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
         unsafe_allow_html=True,
     )
     # Streamlit pattern - https://docs.streamlit.io
-    # Use st.metric for each headline number.
+    # st.metric is the built-in widget for showing a single big number with
+    # a small label underneath. It's perfect for headline stats like this.
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Length", f"{trail['length_km']} km")
     c2.metric("Max altitude", f"{trail['max_alt_m']} m")
@@ -254,7 +268,8 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
     )
     c4.metric("Difficulty (SAC)", trail["difficulty"])
 
-    # If the cache has no row for the chosen date, prompt the user to refresh.
+    # If we don't have weather data for this date in the local database,
+    # show a hint to refresh the cache instead of leaving the section blank.
     st.markdown("#### Snapshot for this date")
     if snapshot is None:
         st.info(
@@ -262,7 +277,8 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
             "Use **🔄 Refresh weather** in the sidebar to fetch one."
         )
     else:
-        # Four-up snapshot: temperature, wind, precipitation, snowline.
+        # Four small stat cards in a row: temperature, wind, precipitation,
+        # and where the snow line is (the altitude above which snow stays).
         a, b, c, d = st.columns(4)
         a.metric(
             "🌡️ Temp",
@@ -300,7 +316,9 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
     st.caption(f"Verdict source: **{source}** · Confidence: **{conf:.0%}**")
 
 
-# Route map tab: folium map with synthetic loop, hazard diamonds, plus elevation profile.
+# Route map tab. Shows a topographic map with a fake loop drawn on top
+# (since we don't have real GPX traces), plus warning diamonds for any
+# hazards. Below the map we draw an elevation profile chart.
 def tab_route(trail, snapshot) -> None:
     st.markdown(
         section_heading(
@@ -317,10 +335,13 @@ def tab_route(trail, snapshot) -> None:
         "orientation, not navigation."
     )
 
-    # Build a synthetic circular route since real GPX traces aren't shipped.
+    # Build a fake circular loop centered on the trail's start point. We
+    # don't have real GPS traces for our trails, so this is just a visual
+    # placeholder. The total perimeter matches the trail's listed length.
     pts = synthetic_route(trail["lat"], trail["lon"], trail["length_km"])
     # Adapted from folium docs - https://python-visualization.github.io/folium/
-    # OpenTopoMap tiles give a topographic context layer with contour lines.
+    # OpenTopoMap is a free topographic map style with contour lines, so
+    # the user can see elevation changes around the trail.
     fmap = folium.Map(
         location=[trail["lat"], trail["lon"]],
         zoom_start=13,
@@ -332,7 +353,7 @@ def tab_route(trail, snapshot) -> None:
             "(CC-BY-SA)"
         ),
     )
-    # Blue polyline = the (approximate) loop drawn on top of the topo tiles.
+    # Draw the approximate trail loop as a blue line on top of the map.
     folium.PolyLine(
         pts,
         color="#1f7ae0",
@@ -340,14 +361,15 @@ def tab_route(trail, snapshot) -> None:
         opacity=0.95,
         tooltip=f"≈{trail['length_km']} km loop",
     ).add_to(fmap)
-    # Green play-button marker at the trail start.
+    # Drop a green "play" pin at the trail's official start point.
     folium.Marker(
         [trail["lat"], trail["lon"]],
         tooltip=f"Start · {trail['name']}",
         icon=folium.Icon(color="green", icon="play", prefix="fa"),
     ).add_to(fmap)
 
-    # Drop a "summit" marker at the loop midpoint as a rough peak indicator.
+    # Put a "summit" flag pin at the halfway point of our fake loop. The
+    # real summit could be anywhere, but this is good enough as a hint.
     half = pts[len(pts) // 2]
     folium.Marker(
         [half[0], half[1]],
@@ -355,13 +377,15 @@ def tab_route(trail, snapshot) -> None:
         icon=folium.Icon(color="darkblue", icon="flag", prefix="fa"),
     ).add_to(fmap)
 
-    # Hazards are derived from the route shape, trail metadata and weather snapshot.
-    # We render each as a rotated-square "diamond" with a yellow/red colour by severity.
+    # The hazard list comes from looking at the trail's grade and the
+    # weather snapshot. Each hazard gets drawn as a diamond shape on the
+    # map. Yellow means "caution", red means "serious hazard".
     hazards = hazard_points(pts, trail, snapshot)
     for h in hazards:
         bg = "#E69F00" if h["severity"] == "warn" else "#C0392B"
         # Adapted from folium docs - https://python-visualization.github.io/folium/
-        # DivIcon lets us inject raw HTML/CSS for a custom marker shape.
+        # DivIcon is a folium feature that lets us draw any HTML we want
+        # as a map marker. We rotate a square 45 degrees to make a diamond.
         diamond = folium.DivIcon(
             html=(
                 f"<div style='width:30px; height:30px; transform:rotate(45deg);"
@@ -385,11 +409,15 @@ def tab_route(trail, snapshot) -> None:
         )
 
     # Adapted from folium docs - https://python-visualization.github.io/folium/
-    # st_folium embeds the folium map in Streamlit; returned_objects=[] avoids reruns on pan/zoom.
+    # st_folium plugs a folium map into Streamlit. We pass returned_objects=[]
+    # so that panning or zooming the map doesn't trigger a Streamlit rerun
+    # (which would be wasteful and feel laggy to the user).
     st_folium(fmap, width=None, height=480, returned_objects=[])
 
-    # Synthetic elevation profile: triangle from min altitude up to max altitude and back.
-    # n = 30 sample points keeps the chart smooth without being expensive.
+    # Build a simple elevation profile chart. Because we don't have real
+    # elevation data along the route, we fake it: climb from min altitude
+    # up to the trail's max altitude, then back down. 30 sample points is
+    # smooth enough for a chart but cheap to compute.
     st.markdown("#### ⛰️ Elevation profile")
     n = 30
     half_n = n // 2
@@ -400,12 +428,16 @@ def tab_route(trail, snapshot) -> None:
         * (i / half_n if i <= half_n else (n - i) / half_n)
         for i in xs
     ]
-    # Pull today's snowline (if cached) to draw a reference line on the profile.
+    # If we have today's snowline saved, we draw it as a dashed horizontal
+    # line across the elevation chart. This makes it easy to see whether
+    # the trail crosses into snow territory near its summit.
     snap = db_manager.get_weather_for_date(trail["id"], date.today())
     snowline = snap["snowline_m"] if snap and snap["snowline_m"] else None
 
     # Adapted from Plotly Python docs - https://plotly.com/python/
-    # Filled area chart for the elevation profile, with optional snowline overlay.
+    # A filled area chart looks like a small mountain silhouette, which is
+    # exactly what we want for an elevation profile. The snowline (if any)
+    # gets added on top as a horizontal dashed line.
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -436,7 +468,8 @@ def tab_route(trail, snapshot) -> None:
     st.plotly_chart(fig, width="stretch")
 
 
-# Tricky parts tab: render a card per rule-based hazard/packing note.
+# Tricky parts tab. We loop through the list of hazard notes that
+# analyse_tricky_sections returns and draw a small bordered card for each.
 def tab_tricky(trail, snapshot) -> None:
     st.markdown(
         section_heading(
@@ -446,7 +479,8 @@ def tab_tricky(trail, snapshot) -> None:
         ),
         unsafe_allow_html=True,
     )
-    # Helper combines SAC grade thresholds with weather signals to surface notes.
+    # This helper looks at the trail's difficulty grade and the day's
+    # weather, then returns a list of safety notes worth showing.
     parts = analyse_tricky_sections(trail, snapshot)
     for p in parts:
         with st.container(border=True):
@@ -459,12 +493,14 @@ def tab_tricky(trail, snapshot) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Weather tab - merges the old Forecast page into Trail Detail
+# Weather tab. This is the most detailed tab. We pulled what used to be a
+# separate Forecast page into here.
 # ---------------------------------------------------------------------------
 
 
-# Build the HTML for a single altitude card (top or bottom of trail).
-# Returns an empty-state card when no forecast is available.
+# Build the HTML for one of the altitude cards (the "top" or "bottom" of
+# the trail). If we don't have a forecast for that altitude, we still
+# return a card but with a friendly "no data" message inside.
 def _altitude_card(label: str, alt_m: int, projected: dict | None) -> str:
     if not projected:
         return (
@@ -478,14 +514,17 @@ def _altitude_card(label: str, alt_m: int, projected: dict | None) -> str:
     precip = projected.get("precip_mm")
     snowline = projected.get("snowline_m")
 
-    # Build a small list of summary lines, skipping any indicator that is missing.
+    # We build a few summary lines and skip any indicator we don't have
+    # data for (so a missing wind reading doesn't print "None km/h").
     rows = []
     if wind is not None:
         rows.append(f"💨 {wind:.0f} km/h wind")
     if precip is not None:
         rows.append(f"☔ {precip:.1f} mm precip")
     if snowline is not None:
-        # Snowline relative to this card's altitude: positive = above hiker, negative = below.
+        # Compare the snowline to this card's altitude. If the snowline is
+        # higher than the hiker, snow is "above" them. If lower, snow is
+        # already where they'll be walking, which is more risky.
         margin = int(snowline) - alt_m
         marker = "above" if margin >= 0 else "below"
         rows.append(f"❄️ snowline {abs(margin)} m {marker} you")
@@ -502,26 +541,36 @@ def _altitude_card(label: str, alt_m: int, projected: dict | None) -> str:
 
 
 def _seven_day_dataframe(trail_id: int) -> pd.DataFrame:
-    """Up to 7 cached forecast rows starting from today (oldest first)."""
-    # Pull a 14-day window so we still get a useful 7-day slice even if a few rows are missing.
+    """Return up to 7 cached forecast rows starting from today (oldest first).
+
+    We grab a wider 14-day window from the database first, then pick the
+    next 7 days starting today. The extra cushion means a few missing
+    rows still let us return a useful list of upcoming days.
+    """
+    # Pull the wider window first; we narrow it down to today + next 7 below.
     rows = db_manager.get_weather_history(trail_id, days=14)
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame([dict(r) for r in rows])
     df["snapshot_date"] = pd.to_datetime(df["snapshot_date"]).dt.date
-    # Keep today and forward only, then take the soonest seven days.
+    # Drop any past dates, sort the remaining ones in ascending order,
+    # and keep the first seven (today plus the next six days).
     today = date.today()
     df = df[df["snapshot_date"] >= today].sort_values("snapshot_date").head(7)
     return df.reset_index(drop=True)
 
 
-# Scan the 7-day window, pick the day with the best (verdict, confidence) pair,
-# and render an appropriate success/warning/error banner.
+# Look at the upcoming 7 days and find the single best day to hike. The
+# winning day is the one with the safest verdict, and among days with the
+# same verdict, the one with the highest confidence. Then we show a banner
+# with appropriate wording: green for SAFE, orange for BORDERLINE, red
+# when even the best upcoming day is AVOID.
 def _render_best_day(df, trail, risk: int) -> None:
     if df.empty:
         return
     grade = trail["difficulty"]
-    # Hard alpine grades never get a SAFE call; we adjust the banner wording for them.
+    # T4, T5, T6 routes are never displayed as SAFE no matter how good the
+    # weather is. We change the banner wording to reflect that rule.
     is_hard = grade in {"T4", "T5", "T6"}
     scored = []
     for row in df.itertuples(index=False):
@@ -534,7 +583,9 @@ def _render_best_day(df, trail, risk: int) -> None:
         }
         v, c, _, _ = predictions.predict_for_snapshot(snap, trail["max_alt_m"])
         v, _ = predictions.adjust_verdict(v, trail, snap, risk)
-        # Composite score: lower is better. Verdict dominates (0/1/2), confidence is a tiebreaker.
+        # Build a single score so we can sort. The verdict matters most
+        # (a SAFE day always beats a BORDERLINE one), and within the same
+        # verdict we use confidence as a tiebreaker. Lower score is better.
         score = ({"SAFE": 0, "BORDERLINE": 1, "AVOID": 2}[v] * 1.0) - c * 0.1
         scored.append((row.snapshot_date, v, c, score))
     scored.sort(key=lambda t: t[3])
@@ -564,14 +615,16 @@ def _render_best_day(df, trail, risk: int) -> None:
         )
 
 
-# Render one coloured card per upcoming day. The currently-viewed date gets a blue outline.
+# Draw a small colored card for each of the next 7 days. The card uses the
+# verdict color as its background. The day currently shown in the date
+# picker gets a blue outline so the user can locate it at a glance.
 def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
     st.markdown("##### Daily verdicts (next 7 days)")
     if df.empty:
         st.info("Refresh the cache to populate the 7-day forecast.")
         return
     # Streamlit pattern - https://docs.streamlit.io
-    # One column per day; we splat a coloured HTML card into each.
+    # Create one column per day and drop a colored HTML card into each.
     cols = st.columns(len(df))
     for col, row in zip(cols, df.itertuples(index=False)):
         snap = {
@@ -581,13 +634,15 @@ def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
             "snowline_m": row.snowline_m,
             "cloud_pct": row.cloud_pct,
         }
-        # Predict raw verdict, then post-process for risk tolerance and SAC grade.
+        # First get the raw verdict from the model, then adjust it for the
+        # user's risk tolerance and the trail's difficulty grade.
         verdict, conf, _, source = predictions.predict_for_snapshot(
             snap, trail["max_alt_m"]
         )
         adjusted, _ = predictions.adjust_verdict(verdict, trail, snap, risk)
         colour = VERDICT_COLOURS[adjusted]
-        # Blue outline highlights the date currently selected in the action bar.
+        # If this card corresponds to the date the user is currently
+        # looking at, we add a blue outline so it stands out.
         is_today = row.snapshot_date == target_date
         ring = "outline:3px solid #1f7ae0;" if is_today else ""
         with col:
@@ -613,13 +668,16 @@ def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
 
 
 # Adapted from Plotly Python docs - https://plotly.com/python/
-# Optional timeline (collapsed by default): temperature line, wind line on the
-# secondary axis, and precipitation bars sharing the wind axis.
+# A bonus 7-day timeline chart, hidden inside an expander so it doesn't
+# clutter the page. Temperature gets a red line on the left axis. Wind
+# (blue dashed line) and precipitation (green bars) share the right axis.
 def _render_timeline_chart(df) -> None:
     if df.empty:
         return
     with st.expander("📈 7-day timeline (temperature · wind · precip)", expanded=False):
-        # make_subplots with secondary_y lets us mix two y-scales on the same plot.
+        # make_subplots with secondary_y=True is the Plotly trick to put
+        # two different y-axes (left and right) on the same chart. We
+        # need this because temperature uses degrees but wind uses km/h.
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(
             go.Scatter(
@@ -662,8 +720,10 @@ def _render_timeline_chart(df) -> None:
         st.plotly_chart(fig, width="stretch")
 
 
-# Weather tab: the deepest tab on the page. Stacks the verdict explanation,
-# top/bottom altitude cards, per-indicator breakdown, 7-day cards and timeline.
+# Weather tab. The biggest tab in the page. From top to bottom it shows
+# the verdict explanation, top vs bottom altitude weather cards, a
+# per-indicator breakdown (temp, wind, precip, cloud, snow), the 7-day
+# verdict cards, and the optional timeline chart.
 def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
     st.markdown(
         section_heading(
@@ -673,15 +733,18 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
         ),
         unsafe_allow_html=True,
     )
-    # interpret_weather translates the snapshot into headline + bullet points + per-indicator notes.
+    # interpret_weather takes the raw numbers and turns them into plain
+    # English text: a one-line headline, a few bullet points, and a small
+    # note for each weather indicator.
     interp = interpret_weather(snapshot, trail, adjusted or verdict)
 
     if interp["headline"]:
         st.info(interp["headline"])
 
-    # Top vs Bottom weather (lapse-rate projection).
-    # The reported forecast is one point. We project it to the trail's min/max altitudes
-    # using a standard environmental lapse rate to give a feel for top-of-climb conditions.
+    # Top vs Bottom weather. The forecast Open-Meteo gives us is for a
+    # single point. To give the user a feel for what it's like at the
+    # bottom and top of the climb, we estimate both using the standard
+    # lapse rate (air gets 6.5 degrees cooler per 1000 m of climb).
     st.markdown("##### Top vs. bottom weather")
     st.caption(
         "Forecasts are reported at one point. We project them to the trail's "
@@ -709,7 +772,9 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
         for b in interp["bullets"]:
             st.markdown(f"- {b}")
 
-    # Two-column grid of small cards: one per weather indicator with a written takeaway.
+    # A two-column grid of small bordered cards. One card per weather
+    # indicator (temperature, wind, precip, cloud, snowline). Each card
+    # shows a number plus a written takeaway in plain English.
     st.markdown("##### Per-indicator breakdown")
     grid = st.columns(2)
     items = [
@@ -740,14 +805,18 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
         "Use this to find the best day to go — verdicts here use the same "
         "safety logic as the headline above."
     )
-    # Build the 7-day forecast frame once, then drive three downstream renderers.
+    # We compute the 7-day forecast dataframe once and pass it to three
+    # different renderers. This way we don't query the database three
+    # times for the same data.
     df = _seven_day_dataframe(trail["id"])
     _render_best_day(df, trail, risk)
     _render_seven_day_cards(df, trail, risk, target_date)
     _render_timeline_chart(df)
 
 
-# Photos tab: query Wikimedia Commons for free-licence pictures of the route.
+# Photos tab. We search Wikimedia Commons (a free, openly-licensed image
+# library) for pictures of the route. Photos there are safe to display
+# since they're explicitly licensed for reuse.
 def tab_photos(trail) -> None:
     st.markdown(
         section_heading(
@@ -757,7 +826,9 @@ def tab_photos(trail) -> None:
         ),
         unsafe_allow_html=True,
     )
-    # First try a richer query with canton + hiking, then fall back to bare trail name.
+    # First we try a more specific search ("trail name canton hiking") so
+    # we get photos of the actual area. If that returns nothing, we fall
+    # back to just the trail name as a broader query.
     query = f"{trail['name']} {trail['canton']} hiking"
     with st.spinner("Searching Wikimedia Commons…"):
         images = fetch_trail_images(query, limit=4)
@@ -776,7 +847,9 @@ def tab_photos(trail) -> None:
         "Photos pulled from Wikimedia Commons — click any image to see "
         "the original, photographer, and licence terms."
     )
-    # Two-column gallery. Fall back to a hyperlink if the image fails to load.
+    # Two-column photo gallery. If for some reason an image URL fails to
+    # load, we still show a clickable link to its Wikimedia page so the
+    # user can see the photo there.
     cols = st.columns(2)
     for i, img in enumerate(images):
         with cols[i % 2]:
@@ -797,8 +870,11 @@ def tab_photos(trail) -> None:
 # ---------------------------------------------------------------------------
 
 
-# User report form. Submissions are written to the user_reports table and act
-# as ground-truth labels next time the Random Forest is retrained.
+# The form at the bottom of the page where the user can submit their own
+# report after hiking. Submissions go into the user_reports table. The
+# next time the model is retrained, these reports are used as real labels
+# (overriding the rule-based labels for those specific trail/date pairs),
+# so the model can learn from actual hiker experience.
 def render_report_form(trail) -> None:
     st.divider()
     st.markdown(
@@ -810,7 +886,9 @@ def render_report_form(trail) -> None:
         unsafe_allow_html=True,
     )
     # Streamlit pattern - https://docs.streamlit.io
-    # st.form batches inputs until the user clicks submit, avoiding partial reruns.
+    # Wrapping the inputs in st.form means Streamlit waits until the user
+    # clicks Submit before rerunning the page. Without a form, the page
+    # would rerun after every keystroke or click, which would be wasteful.
     with st.form(f"user_report_form_{trail['id']}", clear_on_submit=True):
         c1, c2 = st.columns([1, 1])
         with c1:
@@ -843,21 +921,25 @@ def render_report_form(trail) -> None:
 # ---------------------------------------------------------------------------
 
 
-# Page entry point. Resolves which trail to show, loads weather, computes the
-# verdict, and stitches together the header, action bar, tabs and report form.
+# Main function for the Trail Detail page. It figures out which trail to
+# display, loads the weather, computes the verdict, then renders the
+# header, the action bar, the five tabs and the report form at the bottom.
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
     apply_app_theme()
 
     # Streamlit pattern - https://docs.streamlit.io
-    # Support deep links: ?trail=<id> in the URL pre-populates session state.
+    # Allow direct URL links like "?trail_id=5" to open this page on a
+    # specific trail. We read the URL parameter and write it into session
+    # state, which is what the rest of the page reads from.
     query_trail_id = trail_id_from_query_params(st.query_params)
     if query_trail_id is not None:
         st.session_state["selected_trail_id"] = query_trail_id
 
     trail_id = st.session_state.get("selected_trail_id")
-    # No trail context: render an empty-state hero with shortcuts back into Find/Map.
+    # No trail was selected. We can't render anything trail-specific, so
+    # instead we show a friendly empty state with shortcuts to Find and Map.
     if trail_id is None:
         st.markdown(
             page_hero(
@@ -881,19 +963,24 @@ def main() -> None:
         st.error(f"Trail #{trail_id} not found in the database.")
         return
 
-    # Date defaults to today unless the user came in with a specific date selected.
+    # If the user arrived from another page with a date selected, use that.
+    # Otherwise default to today.
     target_date = st.session_state.get("selected_date") or date.today()
 
-    # Lazily ensure we have a forecast row for this trail; swallow errors when offline.
+    # Make sure we have a fresh forecast for this trail. If the network
+    # is down or the API is busy, we silently move on. The rest of the
+    # page will just show "no data" wherever the weather is missing, which
+    # is better than crashing.
     try:
         predictions.ensure_forecast_for_trail(trail)
     except Exception:
-        pass  # offline-friendly: show "no data" downstream
+        pass
 
     snap_row = db_manager.get_weather_for_date(trail["id"], target_date)
     snapshot = dict(snap_row) if snap_row else None
 
-    # Run the classifier (or rule fallback) only when we actually have a snapshot.
+    # Only run the classifier if we actually have weather data. Otherwise
+    # we set the verdict to the placeholder so the UI shows "no data".
     if snapshot:
         verdict, conf, _, source = predictions.predict_for_snapshot(
             snapshot, trail["max_alt_m"]
@@ -901,7 +988,9 @@ def main() -> None:
     else:
         verdict, conf, source = "—", 0.0, "no data"
 
-    # Post-process the raw verdict against risk tolerance and hard SAC grades.
+    # Now take the raw verdict from the model and adjust it. The user's
+    # risk tolerance can shift it up or down by one step, and the trail's
+    # SAC grade enforces hard safety rules (T4+ can never be SAFE, etc.).
     risk = st.session_state.get("risk_tolerance", 3)
     if verdict in {"SAFE", "BORDERLINE", "AVOID"}:
         adjusted, caveats = predictions.adjust_verdict(verdict, trail, snapshot, risk)
@@ -914,18 +1003,23 @@ def main() -> None:
         target_date,
     )
 
-    # Surface any "safety lock" notes raised by adjust_verdict (e.g. T6 routes never SAFE).
+    # If the difficulty rules overrode the verdict (for instance, a sunny
+    # T6 route gets bumped down because the terrain is intrinsically
+    # dangerous), we show the reason as a yellow warning under the hero.
     for c in caveats:
         st.warning(f"⚠️ **Safety lock:** {c}")
 
-    # If the user changed the date in the action bar, persist it and rerun.
+    # If the user picked a different date in the action bar, save the new
+    # date in session state and rerun the page so the whole layout updates
+    # to match (verdict, weather snapshot, tabs all change with the date).
     new_date = render_action_bar(trail, target_date)
     if new_date != target_date:
         st.session_state["selected_date"] = new_date
         st.rerun()
 
     # Streamlit pattern - https://docs.streamlit.io
-    # Five tabs hold the deep content for this trail.
+    # The five tabs hold all the deep content for this trail. The user
+    # can click between them without reloading the page.
     overview, route, weather, tricky, photos = st.tabs(
         ["Overview", "Route map", "Weather", "Tricky parts", "Photos"]
     )

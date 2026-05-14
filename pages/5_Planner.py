@@ -1,7 +1,8 @@
-"""Planner page — find the best trail for a given day.
+"""Planner page. Helps the user find the best trail for a specific day.
 
-Takes user input (difficulty, region, date) and returns a ranked list of
-trails predicted SAFE on that day, ordered by confidence.
+The user picks a difficulty, optionally a region, and a date. The page
+returns a sorted list of trails that the model predicts as SAFE on that
+day, with the most confident ones at the top.
 """
 # =============================================================================
 # Source attribution
@@ -32,8 +33,8 @@ st.set_page_config(
 )
 
 
-# Page entry point. Renders the input controls (difficulty, region, date)
-# and triggers the planner search when the user clicks the button.
+# Main function for this page. It shows the input controls (difficulty,
+# region, date) and runs the planner search when the user clicks the button.
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
@@ -44,11 +45,14 @@ def main() -> None:
     )
     st.divider()
 
-    # Pull dropdown options (available difficulties and regions) from the DB.
+    # Read the available difficulties and regions straight from the database.
+    # This way the dropdowns always match what's actually in the catalogue,
+    # instead of being hard-coded lists that could go out of sync.
     meta = db_manager.get_trail_metadata()
 
     # Streamlit pattern - https://docs.streamlit.io
-    # Three side-by-side input columns: difficulty, region, target date.
+    # Three columns sitting side by side. Each one holds a single input:
+    # difficulty filter, region filter, and the date picker.
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         difficulties = st.multiselect(
@@ -66,7 +70,8 @@ def main() -> None:
         )
     with col_c:
         today = date.today()
-        # Open-Meteo forecasts cover today plus 6 days, so we clamp the date range.
+        # The free Open-Meteo forecast only covers today plus the next 6
+        # days, so we restrict the date picker to that window.
         target_date = st.date_input(
             "Target date",
             value=today + timedelta(days=1),
@@ -74,14 +79,19 @@ def main() -> None:
             max_value=today + timedelta(days=6),
         )
 
-    # Run the planner only on explicit button press to avoid recomputing on every rerun.
+    # Only run the planner when the user actually clicks the button.
+    # Without this, Streamlit would re-run the whole search every time
+    # the user touched any widget on the page.
     if st.button("Find trails", type="primary"):
         with st.spinner("Querying forecast data…"):
             _run_planner(difficulties or None, regions or None, target_date)
 
 
-# Core planner: load matching trails, fetch a forecast snapshot per trail for
-# the chosen date, predict a verdict, and render a sorted results table.
+# The actual planner. Steps:
+# 1. Get the trails that match the user's filters from the database.
+# 2. For each one, look up (or fetch) the weather for the chosen date.
+# 3. Run the model to get a verdict and confidence.
+# 4. Sort the results and show them as a styled table.
 def _run_planner(
     difficulties: list[str] | None,
     regions: list[str] | None,
@@ -100,10 +110,13 @@ def _run_planner(
 
     results = []
     # Streamlit pattern - https://docs.streamlit.io
-    # Progress bar gives feedback while we loop through trails one by one.
+    # Show a progress bar so the user knows the app is working. We update
+    # it after each trail finishes so the bar moves smoothly.
     progress = st.progress(0.0, text="Checking forecasts…")
     for i, t in enumerate(trails):
-        # Try the local cache first; fall back to Open-Meteo fetch if the date is missing.
+        # Try the local database first. If we don't have weather saved for
+        # this date yet, we ask Open-Meteo for it. We swallow API failures
+        # so one broken trail doesn't kill the whole search.
         snap = db_manager.get_weather_for_date(t["id"], target_date)
         if snap is None:
             try:
@@ -115,7 +128,8 @@ def _run_planner(
             except Exception:
                 snap = None
         if snap:
-            # Ask the trained classifier (or rule fallback) for a verdict on this snapshot.
+            # Ask the model to predict a verdict for this trail on this date.
+            # If the model isn't trained yet, the rule-based engine takes over.
             v, conf, _, source = predictions.predict_for_snapshot(
                 dict(snap), t["max_alt_m"]
             )
@@ -148,8 +162,10 @@ def _run_planner(
         return
 
     df = pd.DataFrame(results)
-    # Sort verdicts by safety first (SAFE before BORDERLINE before AVOID),
-    # then by confidence within each group (highest confidence first).
+    # Sort the table in two passes. First by verdict, so SAFE rows are at
+    # the top, then BORDERLINE, then AVOID. Within each verdict bucket we
+    # sort by confidence (highest first), so the strongest recommendations
+    # come ahead of the weaker ones.
     order = {"SAFE": 0, "BORDERLINE": 1, "AVOID": 2}
     df["_sort"] = df["Verdict"].map(order)
     df = df.sort_values(
@@ -162,7 +178,8 @@ def _run_planner(
         f"{target_date.strftime('%A %d %B')}."
     )
 
-    # Inline pandas Styler colour callback for the Verdict column cells.
+    # Small helper that returns the CSS color we want for a single cell in
+    # the Verdict column. Pandas Styler runs this function on every cell.
     def colour_verdict(val: str) -> str:
         c = VERDICT_COLOURS.get(val, "#888")
         return f"background-color:{c}; color:white; font-weight:bold;"

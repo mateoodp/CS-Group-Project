@@ -1,13 +1,13 @@
-"""Find a hike — front door of the app.
+"""Find a hike page. This is the main entry point for users.
 
-User answers a 5-question quiz (canton, region, difficulty, length, max
-altitude) and picks a date within the 7-day forecast horizon. The page:
+The user fills in a short quiz (canton, region, difficulty, length, max
+altitude) and picks a date within the 7-day forecast window. Then the page:
 
     1. Filters trails by the quiz answers.
-    2. Refreshes each candidate's forecast cache (no-op if fresh).
+    2. Refreshes each candidate's forecast cache (does nothing if fresh).
     3. Predicts the verdict for the chosen date.
-    4. Ranks by verdict ascending (SAFE first), then by confidence.
-    5. Renders the top results as cards. Click a card → Trail Detail.
+    4. Sorts so the safest trails appear first, then by confidence.
+    5. Shows the top results as cards. Clicking a card opens Trail Detail.
 """
 
 # =============================================================================
@@ -49,7 +49,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Lower number sorts first, so SAFE trails bubble to the top of the result list.
+# We assign a number to each verdict so we can sort the list. Lower numbers
+# come first, which means SAFE trails always end up at the top of the results.
 VERDICT_RANK = {"SAFE": 0, "BORDERLINE": 1, "AVOID": 2, "—": 3}
 TOP_N: int = 10
 FORECAST_HORIZON_DAYS: int = 6
@@ -67,8 +68,9 @@ def render_quiz(meta: dict) -> dict | None:
     )
 
     today = date.today()
-    # Incrementing this counter changes every widget key, forcing Streamlit to
-    # create fresh widget instances with default values on the next rerun.
+    # When this counter goes up, all the widget keys below change too.
+    # Streamlit then treats them as brand-new widgets and resets them
+    # back to their default values. We use this to power the "Clear" button.
     v = st.session_state.get("quiz_reset_counter", 0)
 
     # Two-column layout: filters on the left, distance/altitude/date on the right.
@@ -158,24 +160,29 @@ def render_quiz(meta: dict) -> dict | None:
     }
 
 
-PARALLEL_WORKERS: int = 8  # how many trails we fetch in parallel
-MAX_FETCH_RETRIES: int = 1  # retry once on failure (so total: 2 attempts)
+# How many trails we fetch weather for at the same time. More workers is
+# faster but Open-Meteo will start blocking us if we go too high.
+PARALLEL_WORKERS: int = 8
+# If the first try fails, we attempt one more time before giving up.
+MAX_FETCH_RETRIES: int = 1
 
 
 def _ensure_snapshot(trail, target_date: date) -> tuple[dict | None, str | None]:
     """Try hard to get a cached snapshot for ``(trail, target_date)``.
 
-    Returns ``(snapshot_dict_or_none, error_message_or_none)``. Tries the
-    cache first, then a fetch, then a forced refetch as a fallback. We
-    surface the *last* error so the UI can show users why a trail is
-    missing — never silently degrade to "no data".
+    Returns ``(snapshot_dict_or_none, error_message_or_none)``. We try the
+    cache first, then a fetch, then a forced re-fetch as a last resort. The
+    last error message is kept so the UI can explain why a trail is
+    missing, instead of just silently showing "no data".
     """
-    # Fast path: a fresh snapshot already lives in SQLite, return it.
+    # If we already have a saved forecast for this trail and date, just use it.
     snap = db_manager.get_weather_for_date(trail["id"], target_date)
     if snap is not None:
         return dict(snap), None
 
-    # Otherwise hit the Open-Meteo API to refresh the cache, then retry once.
+    # Otherwise call the Open-Meteo API to fetch fresh weather. If the first
+    # attempt fails, we try one more time with force=True (which ignores any
+    # stale data in the cache).
     # Open-Meteo Forecast API - https://open-meteo.com/en/docs
     last_err: Exception | None = None
     for attempt in range(MAX_FETCH_RETRIES + 1):
@@ -201,11 +208,16 @@ def _ensure_snapshot(trail, target_date: date) -> tuple[dict | None, str | None]
 
 
 def _score_trail(trail, target_date: date, risk: int) -> dict:
-    """Score one trail. Always returns a complete row (even on failure)."""
+    """Score one trail. Always returns a complete row (even on failure).
+
+    If the weather fetch fails we still return a result row, just with the
+    placeholder verdict. That way the user can see the trail appears in the
+    catalogue, instead of it silently disappearing.
+    """
     snap, err = _ensure_snapshot(trail, target_date)
 
-    # If we never got weather data, return a placeholder so the trail still
-    # appears in the list but is sorted to the bottom.
+    # No weather data, so we return a placeholder. The rank_key is set high
+    # so this trail ends up at the bottom of the list.
     if snap is None:
         return {
             "trail": trail,
@@ -219,8 +231,9 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
             "rank_key": (VERDICT_RANK["—"], 1.0, trail["name"].lower()),
         }
 
-    # Run the ML model (or rule fallback) on the snapshot, then apply
-    # difficulty/risk-tolerance adjustments to get the final verdict shown.
+    # Ask the ML model (or the simple rule engine if the model is not trained)
+    # for a verdict. Then adjust it based on trail difficulty and the user's
+    # risk tolerance to get the final verdict we show on the card.
     verdict, conf, _, source = predictions.predict_for_snapshot(
         snap, trail["max_alt_m"]
     )
@@ -244,8 +257,14 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
 
 
 def _score_all_parallel(candidates, target_date: date, risk: int) -> list[dict]:
-    """Score every candidate in parallel with a small thread pool + progress."""
-    # ThreadPoolExecutor is fine here because fetching/scoring is I/O bound.
+    """Score every trail at the same time using a small group of workers.
+
+    Without parallel workers, scoring 234 trails one at a time would take
+    too long. ThreadPoolExecutor sends multiple requests at once so the
+    page feels responsive. A progress bar shows the user it's working.
+    """
+    # ThreadPoolExecutor works well here because the slow part is waiting for
+    # the Open-Meteo API to respond (not heavy Python work).
     results: list[dict] = []
     progress = st.progress(
         0.0, text=f"Checking the forecast for {len(candidates)} trail(s)…"
@@ -273,7 +292,8 @@ def render_results(results: list[dict], target_date: date) -> None:
         )
         return
 
-    # Tally verdicts so we can print a quick green/orange/red summary.
+    # Count how many trails fell into each verdict bucket. We use this for
+    # the small summary line and the colored pills below the search results.
     summary = {"SAFE": 0, "BORDERLINE": 0, "AVOID": 0, "—": 0}
     for r in results:
         summary[r["adjusted"]] = summary.get(r["adjusted"], 0) + 1
@@ -296,7 +316,8 @@ def render_results(results: list[dict], target_date: date) -> None:
         unsafe_allow_html=True,
     )
 
-    # Surface failed fetches loudly - never silently degrade to "no data".
+    # Show failed fetches clearly so the user knows what is missing and why.
+    # We never want to hide errors behind a generic "no data" label.
     failed = [r for r in results if r.get("error")]
     if failed:
         sample_errors = sorted({r["error"] for r in failed})[:3]
@@ -456,7 +477,8 @@ def _render_result_card(
     verdict = r["adjusted"]
     emoji = VERDICT_EMOJI.get(verdict, "⚪")
 
-    # Naismith's rule: 12 min/km + 10 min per 100 m of ascent, used for time estimate.
+    # Naismith's rule is a simple walking-time formula used by hikers:
+    # 12 minutes per kilometer plus 10 minutes for every 100 meters of climb.
     ascent = trail["max_alt_m"] - trail["min_alt_m"]
     time_est = naismith_time(trail["length_km"], ascent)
 
@@ -516,8 +538,9 @@ def _render_result_card(
         """,
         unsafe_allow_html=True,
     )
-    # Clicking "View details" stashes the trail + date into session state
-    # and jumps to the hidden Trail_Detail page.
+    # When the user clicks "View details" we save the trail and date in
+    # session state, then jump to the Trail Detail page. Streamlit pages
+    # share data through session state so we don't lose this when we switch.
     key = f"detail_{'tail_' if compact else ''}{trail['id']}"
     if st.button("View details", key=key, width="stretch"):
         st.session_state["selected_trail_id"] = trail["id"]
@@ -558,7 +581,12 @@ def render_recent_community_feed() -> None:
 
 
 def _answers_signature(answers: dict) -> str:
-    """Stable hash of quiz answers — used to invalidate cached results."""
+    """Build a stable text fingerprint of the quiz answers.
+
+    We use this to decide if we can reuse the previous result list. If the
+    fingerprint changes, the cached results are thrown away and we run a
+    fresh search.
+    """
     serialisable = {
         k: (v.isoformat() if isinstance(v, date) else v) for k, v in answers.items()
     }
@@ -587,14 +615,15 @@ def main() -> None:
         st.error("No trails seeded. Restart the app or run bootstrap.")
         return
 
-    # 1) Render the quiz. ``submitted_answers`` is non-None *only on the
-    #    rerun immediately after Submit*. Persist into session state so the
-    #    results survive subsequent reruns (e.g. clicking "View details"
-    #    on a result card, which triggers a rerun without re-submitting).
+    # 1) Show the quiz. ``submitted_answers`` is only set on the run right
+    #    after the user clicks Submit. We save it in session state so the
+    #    results stay visible when Streamlit reruns the page later (for
+    #    example when the user clicks a "View details" button on a card).
     submitted_answers = render_quiz(meta)
     if submitted_answers is not None:
         st.session_state["find_answers"] = submitted_answers
-        # Quiz changed → invalidate any cached results.
+        # The user just submitted new answers, so any old cached results
+        # are out of date. We delete them so a fresh search will run below.
         st.session_state.pop("find_results", None)
         st.session_state.pop("find_answers_sig", None)
 
@@ -619,8 +648,9 @@ def main() -> None:
             )
             st.rerun()
 
-    # 3) Compute (or reuse) results. We cache by a hash of the answers, so
-    #    flipping pages / clicking buttons doesn't re-fetch all 234 trails.
+    # 3) Either compute new results, or reuse the ones we already have. We
+    #    compare a fingerprint of the answers. If it matches what we saved
+    #    before, we skip the slow fetch and reuse the cached results.
     sig = _answers_signature(answers)
     cache_hit = (
         st.session_state.get("find_answers_sig") == sig

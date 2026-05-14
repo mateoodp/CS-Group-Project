@@ -1,16 +1,23 @@
-"""Helpers for the trail-detail sub-page.
+"""Helper functions for the trail-detail page.
 
-Provides:
-    * ``synthetic_route``       — fake polyline (we have no GPX data).
-    * ``interpret_weather``     — plain-English explanation of a verdict.
-    * ``analyse_tricky_sections`` — rule-based list of route hazards.
-    * ``fetch_trail_images``    — Wikimedia Commons image search (cached).
-    * ``difficulty_dots_html``  — 4-dot SAC-grade indicator (HTML span).
-    * ``naismith_time``         — estimated walking time from length+ascent.
-    * ``weather_at_altitude``   — lapse-rate adjustment for top vs bottom.
+This module groups together a bunch of small utility functions used by
+the Trail Detail page:
 
-The pure functions have no side effects; the photo fetcher calls a free
-public API (no key) and is wrapped in ``st.cache_data``.
+    * synthetic_route: draws a fake circular polyline because we don't
+                       have real GPX data for our trails.
+    * interpret_weather: turns a forecast snapshot into plain English
+                         text the user can actually read.
+    * analyse_tricky_sections: returns a list of rule-based hazard cards.
+    * fetch_trail_images: searches Wikimedia Commons for trail photos
+                          (results are cached).
+    * difficulty_dots_html: renders a SAC difficulty as 4 colored dots.
+    * naismith_time: estimated walking time from distance and ascent.
+    * weather_at_altitude: projects a forecast up or down a few hundred
+                           meters using the standard lapse rate.
+
+All these functions are pure (no side effects) except for the photo
+fetcher, which calls Wikimedia's free public API. Its results are cached
+for 24 hours via st.cache_data so we don't spam the API.
 """
 
 # =============================================================================
@@ -36,22 +43,27 @@ import streamlit as st
 def synthetic_route(
     lat: float, lon: float, length_km: float, n_points: int = 48
 ) -> list[tuple[float, float]]:
-    """Build an approximate circular loop centred on ``(lat, lon)``.
+    """Build a fake circular trail loop centered on the given coordinate.
 
-    We don't have GPX traces for the seeded trails, so the route shown on
-    the map is a circle whose perimeter equals ``length_km``. Always shown
-    with an "approximate" caveat in the UI.
+    Our seeded trails don't ship with real GPS traces, so we can't draw
+    the actual route on the map. Instead we draw a circle. The circle's
+    perimeter matches the trail's listed length, so visually it's
+    roughly the right size. The UI always labels this as approximate.
     """
-    # Circumference equation reversed: radius_km = length_km / (2*pi).
-    # The latitude conversion uses 111 km per degree; longitude shrinks with
-    # cos(latitude) because meridians converge toward the poles.
+    # Standard circle math: if the perimeter is length_km then the
+    # radius is length_km / (2 * pi). We then convert kilometers to
+    # latitude/longitude degrees. One degree of latitude is about 111 km
+    # everywhere. One degree of longitude shrinks as you go away from
+    # the equator (because meridians get closer together near the poles),
+    # so we multiply by cos(latitude) to compensate.
     radius_km = max(length_km, 0.5) / (2 * math.pi)
     radius_lat = radius_km / 111.0
     radius_lon = radius_km / max(111.0 * math.cos(math.radians(lat)), 1e-3)
 
     pts: list[tuple[float, float]] = []
-    # Walk an evenly spaced circle of n_points+1 vertices so the polyline
-    # closes back on itself.
+    # Walk around the circle in n_points + 1 evenly spaced steps. We add
+    # the extra step so the polyline ends exactly where it started, which
+    # makes folium draw a fully closed loop.
     for i in range(n_points + 1):
         angle = 2 * math.pi * i / n_points
         pts.append(
@@ -65,9 +77,10 @@ def synthetic_route(
 # Weather interpretation
 # ---------------------------------------------------------------------------
 
-# Helper banders below convert a continuous weather measurement into a
-# short human label plus an actionable note. Thresholds are calibrated to
-# typical Swiss alpine hiking advice (DAV / SAC guidance).
+# The little helpers below ("banders") take a continuous weather reading
+# like "12 degrees" or "27 km/h wind" and return a short label plus a
+# practical hint. The cutoff numbers come from typical Swiss hiking
+# guidance (DAV / SAC advice for alpine routes).
 def _temp_band(t: float) -> tuple[str, str]:
     if t < -5:
         return "very cold", "winter gear and avalanche awareness essential"
@@ -113,13 +126,17 @@ def _cloud_band(c: float) -> str:
 
 
 def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> dict:
-    """Return per-indicator commentary + an overall reason for the verdict.
+    """Turn a weather snapshot into plain-English text the user can read.
 
-    Always returns the keys: ``headline``, ``temp``, ``wind``, ``precip``,
-    ``cloud``, ``snow`` and ``bullets`` (list of plain-text reasons that
-    drove the verdict). Empty/None values are gracefully skipped.
+    Returns a dictionary with these keys: headline, temp, wind, precip,
+    cloud, snow, and bullets. The ``bullets`` value is a list of short
+    reasons that explain why we landed on the verdict we did. Any
+    indicator we don't have data for gets set to None and is skipped
+    by the UI.
     """
-    # Defensive empty payload when no cached forecast exists for the day.
+    # If we have no forecast at all, return an empty payload with a
+    # friendly headline. The UI will render it as a hint instead of
+    # crashing or showing zeros everywhere.
     if not snapshot:
         return {
             "headline": "No cached forecast for this day yet — refresh the weather "
@@ -154,8 +171,10 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
     else:
         out["cloud"] = None
 
-    # Compare the snowline to the trail's summit. A positive margin means
-    # the trail is snow-free; a negative margin means snow on the upper part.
+    # The snowline tells us the altitude above which the air is below
+    # freezing. We compare it to the trail's highest point. If the
+    # snowline is above the summit, the trail is snow-free. If it sits
+    # below the summit, expect snow on the upper section.
     if snow is not None:
         margin = snow - max_alt
         if margin >= 300:
@@ -176,7 +195,9 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
     else:
         out["snow"] = None
 
-    # Build the bulleted reasons that explain the verdict in plain English.
+    # Build a list of short bullet point reasons that explain why we
+    # arrived at this verdict. These show up under the headline in the
+    # Weather tab so the user can quickly understand the call.
     bullets: list[str] = []
     if temp is not None:
         if -2 <= temp <= 22 and verdict == "SAFE":
@@ -207,8 +228,10 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
             "A mix of indicators — see the per-feature breakdown above for the full picture."
         )
 
-    # Choose a headline tone keyed by SAC grade. Harder grades get sterner
-    # language even on SAFE verdicts to keep users honest about the terrain.
+    # Pick the right tone of headline depending on the SAC difficulty
+    # grade. On harder routes we use stricter language, even when the
+    # weather is great, to remind the user that the terrain itself is
+    # the bigger risk.
     grade = trail["difficulty"]
     is_hard = grade in {"T4", "T5", "T6"}
     is_demanding = grade in {"T3", "T4", "T5", "T6"}
@@ -254,8 +277,9 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
         verdict, "Forecast cached — see the breakdown below."
     )
 
-    # Promote a terrain caveat to the top of the bullet list on hard grades
-    # so users see the warning before any positive weather indicators.
+    # On the alpine grades, we slip a terrain warning to the very top of
+    # the bullet list. We want the user to see the danger note before
+    # they read any positive weather indicators below it.
     if is_hard and verdict in {"SAFE", "BORDERLINE"}:
         bullets.insert(0, (
             f"⚠️ **Terrain caveat:** {grade} routes carry inherent risk — exposure, "
@@ -271,8 +295,9 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
 # Tricky-parts analyser
 # ---------------------------------------------------------------------------
 
-# Canonical safety blurbs per SAC grade. The icon + title + blurb fields
-# feed directly into the "Tricky parts" cards in the trail detail tab.
+# For each SAC grade we have a fixed safety description. Each entry has
+# an icon, a title and a longer blurb. The Trail Detail page renders one
+# of these as a card on the "Tricky parts" tab based on the trail's grade.
 _DIFFICULTY_NOTES: dict[str, dict] = {
     "T1": {"icon": "🚶",
            "title": "Easy hiking path (T1)",
@@ -316,13 +341,23 @@ _DIFFICULTY_NOTES: dict[str, dict] = {
 
 
 def analyse_tricky_sections(trail: dict, snapshot: Optional[dict]) -> list[dict]:
-    """Return a list of rule-based hazard cards for this trail."""
-    # Each appended dict produces one hazard card in the UI. Order matters:
-    # safety preface first, then terrain, then route logistics, then weather.
+    """Build the list of hazard cards shown on the Tricky Parts tab.
+
+    Each dictionary in the returned list becomes one card on the page.
+    We add them in a deliberate order:
+
+        1. Safety preface (only on T3 and above).
+        2. Terrain card based on the SAC grade.
+        3. Emergency / logistics info (only on T4-T6).
+        4. Effort cards (long climbs, long distance, high altitude).
+        5. Conditions cards driven by the weather snapshot.
+    """
     parts: list[dict] = []
     grade = trail["difficulty"]
 
-    # T3+: lead with the hard truth that good weather alone isn't enough.
+    # On T3 and the alpine grades, the very first card reminds the user
+    # that nice weather alone is not enough to make these routes safe.
+    # We surface this warning before anything else so it's hard to miss.
     if grade in {"T3", "T4", "T5", "T6"}:
         parts.append({
             "icon": "🛑",
@@ -355,7 +390,8 @@ def analyse_tricky_sections(trail: dict, snapshot: Optional[dict]) -> list[dict]
             "category": "Safety",
         })
 
-    # Effort cards: tier-based on elevation gain and overall route length.
+    # Cards about how hard the effort will be. We bucket by elevation
+    # gain (how much vertical climbing) and by total distance.
     elev_gain = trail["max_alt_m"] - trail["min_alt_m"]
     if elev_gain >= 1200:
         parts.append({
@@ -503,30 +539,39 @@ def analyse_tricky_sections(trail: dict, snapshot: Optional[dict]) -> list[dict]
 # ---------------------------------------------------------------------------
 
 # Wikimedia Commons API - https://commons.wikimedia.org/w/api.php
-# Free, no-key public endpoint used to look up Creative Commons hiking photos.
+# Public API for searching Creative-Commons-licensed photos. Free, and
+# does not require an API key.
 _COMMONS_API: str = "https://commons.wikimedia.org/w/api.php"
 # Wikimedia request etiquette - https://meta.wikimedia.org/wiki/User-Agent_policy
-# Commons asks third-party clients to identify themselves via User-Agent.
+# Wikimedia asks any tool that uses their API to identify itself with a
+# User-Agent header. So we set ours to a short string that describes the
+# project. This way they can contact us if our app is misbehaving.
 _USER_AGENT: str = "SwissHikingForecaster/1.0 (educational project)"
 _IMAGE_EXTS: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
 
 
 # Streamlit caching pattern - https://docs.streamlit.io
-# Cache search results for 24h to stay polite to the Commons API.
+# Cache search results for 24 hours. The same trail name will get the
+# same answer for at least a day, which keeps us polite toward the
+# Commons API and makes the page feel instant on repeat visits.
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_trail_images(query: str, limit: int = 4) -> list[dict]:
-    """Search Wikimedia Commons for free-licensed photos matching ``query``.
+    """Search Wikimedia Commons for free-licensed photos matching the query.
 
-    Returns up to ``limit`` dicts: ``{url, page, title}``. ``url`` is a
-    pre-sized thumbnail (800 px wide). Cached for 24 h. Returns ``[]`` on
-    any network or parse failure — the UI shows a fallback in that case.
+    Returns up to ``limit`` results. Each result is a dictionary with
+    keys ``url``, ``page`` and ``title``. The ``url`` is already sized to
+    800 pixels wide, so the page does not need to do its own resizing.
+    Results are cached for 24 hours. If the network is down or the API
+    fails, we return an empty list and the UI shows a fallback image.
     """
     if not query:
         return []
     # MediaWiki search action - https://www.mediawiki.org/wiki/API:Search
-    # action=query + list=search returns the top matching files. We over-fetch
-    # then filter client-side because the API has no way to require image
-    # extensions; namespace 6 restricts results to the File: namespace.
+    # We use action=query with list=search to get the best matching files.
+    # We ask for more results than needed because the API has no way to
+    # say "only image files", so we filter client-side based on file
+    # extension. The srnamespace=6 parameter restricts results to the
+    # File: namespace, which is where Wikimedia stores image files.
     try:
         resp = requests.get(
             _COMMONS_API,
@@ -544,13 +589,14 @@ def fetch_trail_images(query: str, limit: int = 4) -> list[dict]:
         resp.raise_for_status()
         hits = resp.json().get("query", {}).get("search", [])
     except Exception:
-        # Any network/parse failure falls back to an empty list so the caller
-        # can render a fallback image instead of crashing the page.
+        # Any network or parsing problem returns an empty list. The caller
+        # can show a fallback image instead of the page crashing.
         return []
 
-    # Build the result list: keep only files with image extensions, build
-    # a Special:FilePath thumbnail URL (auto-resizes server-side), and link
-    # back to the Commons page so users can see the original licence.
+    # Filter the search results to actual image files, then build a tidy
+    # dictionary for each one. The ``url`` is a Special:FilePath link,
+    # which Wikimedia auto-resizes for us. We also keep a link back to
+    # the Commons file page so the user can check the photo licence.
     out: list[dict] = []
     for hit in hits:
         title = hit.get("title", "")
@@ -569,11 +615,13 @@ def fetch_trail_images(query: str, limit: int = 4) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Visual helpers - used by the redesigned cards/headers
+# Visual helpers used across the discovery cards and the trail headers.
 # ---------------------------------------------------------------------------
 
-# (colour, filled-out-of-4) per SAC grade. Mirrors the four-dot escalation
-# in the reference design (green → blue → orange → red → black).
+# For each SAC grade we store a (color, number-of-filled-dots-out-of-four)
+# pair. This produces the four-dot difficulty badge you see on cards and
+# in the trail hero. The color escalates from green (easy) to black (T6),
+# and more dots get filled in as the grade goes up.
 _DIFFICULTY_DOTS: dict[str, tuple[str, int]] = {
     "T1": ("#1E7B3A", 1),  # one green dot
     "T2": ("#1E7B3A", 2),  # two green dots
@@ -594,11 +642,12 @@ _GRADE_LABEL: dict[str, str] = {
 
 
 def difficulty_dots_html(grade: str, dot_size_px: int = 11) -> str:
-    """Return an inline-flex HTML span showing the SAC grade as 4 dots."""
+    """Return the HTML for the four-dot difficulty badge for a SAC grade."""
     colour, filled = _DIFFICULTY_DOTS.get(grade, ("#888", 0))
     dots: list[str] = []
-    # Render exactly 4 dots; the first ``filled`` are coloured solid, the
-    # rest stay outlined to convey "max difficulty out of 4 visible steps".
+    # We always draw exactly 4 dots. The first few are filled with color
+    # based on the grade. The remaining ones stay as empty outlines.
+    # That way the user can see "this grade is X out of 4" at a glance.
     for i in range(4):
         bg = colour if i < filled else "transparent"
         border = colour if i < filled else "#cfd2d6"
@@ -617,17 +666,18 @@ def difficulty_dots_html(grade: str, dot_size_px: int = 11) -> str:
 
 
 def naismith_time(length_km: float, ascent_m: float) -> str:
-    """Estimated round-trip walking time using Naismith's rule.
+    """Estimate how long a hike will take using Naismith's rule.
 
-    Naismith: 12 minutes per km on the flat + 10 minutes per 100 m of ascent.
-    The seed catalogue stores ``length_km`` as the trail length; we treat it
-    as the round-trip distance and apply ascent only once (single-summit
-    out-and-back). Good enough for an at-a-glance figure — never quote it as
-    a guarantee.
+    Naismith's rule is a classic walking time formula: 12 minutes per
+    kilometer on flat ground, plus another 10 minutes for every 100 m
+    of climbing. We treat the catalogue's length_km as the round-trip
+    distance and only count ascent once (assuming one main climb).
+    The result is good enough for a quick estimate; it is not a guarantee.
     """
     # Naismith's rule - https://en.wikipedia.org/wiki/Naismith%27s_rule
-    # 12 min/km flat + 10 min per 100 m of ascent. divmod converts the
-    # total minutes into a (hours, minutes) tuple for display.
+    # 12 minutes per km flat plus 10 minutes per 100 m of ascent. The
+    # divmod call splits the total minutes into hours and remainder
+    # minutes so we can format it nicely.
     minutes = max(1, length_km * 12 + (ascent_m / 100.0) * 10)
     h, m = divmod(int(round(minutes)), 60)
     if h == 0:
@@ -642,13 +692,14 @@ def naismith_time(length_km: float, ascent_m: float) -> str:
 # ---------------------------------------------------------------------------
 
 # Atmospheric lapse rate - https://en.wikipedia.org/wiki/Lapse_rate
-# 6.5 C cooler per 1000 m gained is the textbook average and matches the
-# value Open-Meteo uses internally for altitude adjustments.
-# Standard environmental lapse rate (°C per metre).
+# Air gets 6.5 degrees Celsius colder for every 1000 m you climb. This
+# is the standard meteorological average and the same number Open-Meteo
+# uses internally when adjusting forecasts for altitude.
 _LAPSE_RATE: float = 0.0065
-# Rough wind amplification at altitude (less surface friction). Linear
-# interpolation between 1.0× at the trail bottom and ``_WIND_TOP_MULT`` at
-# the top - purely heuristic, calibrated against typical Alpine ratios.
+# Wind speeds up at altitude because there's less friction from trees
+# and buildings. We use a simple linear ramp: 1.0x at the trail bottom
+# and up to 1.4x at the top. This is just a rough rule of thumb that
+# matches what we see in typical Swiss alpine weather data.
 _WIND_TOP_MULT: float = 1.4
 
 
@@ -657,35 +708,41 @@ def weather_at_altitude(
     target_alt_m: float,
     reference_alt_m: float,
 ) -> Optional[dict]:
-    """Project a forecast snapshot from one altitude to another.
+    """Estimate what the weather looks like at a different altitude.
 
-    Open-Meteo gives us a single value per day at the trail's lat/lon; we
-    treat ``reference_alt_m`` (typically the trail's min altitude) as the
-    measurement point and project to ``target_alt_m`` using:
+    The forecast we get from Open-Meteo is for a single point. We use
+    ``reference_alt_m`` (usually the trail's lowest altitude) as that
+    measurement point and project the values up or down to
+    ``target_alt_m`` using simple rules:
 
-    * Temperature: standard lapse rate −6.5 °C / 1000 m of climb.
-    * Wind: linear ramp from 1.0× at the bottom to ~1.4× at the top.
-    * Precipitation, cloud cover, snowline: passed through unchanged
-      (no defensible single-trail model for these).
+    * Temperature: gets 6.5 degrees colder per 1000 m of climb.
+    * Wind: scales up linearly from 1.0x at the bottom to about 1.4x.
+    * Precipitation, cloud cover and snowline: left alone, because we
+      don't have a sensible way to project these for a single trail.
 
-    Returns ``None`` if the snapshot itself is ``None``.
+    Returns ``None`` if there's no snapshot to project from.
     """
     if snapshot is None:
         return None
 
-    # delta_m is positive when projecting upward (bottom -> top), negative
-    # when projecting downward. dict(snapshot) gives us a shallow copy to
-    # mutate without affecting the cached DB row.
+    # delta_m is the height difference we're projecting across. It is
+    # positive when going up (bottom to top), negative when going down.
+    # We call dict() on the snapshot to make a copy so changes here don't
+    # accidentally affect the row sitting in the cache.
     delta_m = target_alt_m - reference_alt_m
     out: dict = dict(snapshot)
 
-    # Temperature: subtract lapse_rate * delta_m (cooler the higher we go).
+    # Temperature: subtract lapse_rate times delta_m. Climbing higher
+    # gives a positive delta_m, which subtracts a bigger number, so the
+    # temperature ends up cooler. That matches reality.
     if snapshot.get("temp_c") is not None:
         out["temp_c"] = snapshot["temp_c"] - _LAPSE_RATE * delta_m
 
     if snapshot.get("wind_kmh") is not None and delta_m > 0:
-        # Scale to a fraction of the bottom-to-top ramp (assume ~1500 m total
-        # climb produces the full multiplier - bigger climbs cap at the multiplier).
+        # Use 1500 m of climb as the reference for the full multiplier.
+        # Shorter climbs get a proportionally smaller boost. Climbs of
+        # more than 1500 m simply cap at the full _WIND_TOP_MULT, since
+        # we don't want a runaway multiplier for very tall mountains.
         ramp = min(1.0, delta_m / 1500.0)
         out["wind_kmh"] = snapshot["wind_kmh"] * (1.0 + (_WIND_TOP_MULT - 1.0) * ramp)
 
@@ -701,17 +758,23 @@ def hazard_points(
     trail: dict,
     snapshot: Optional[dict],
 ) -> list[dict]:
-    """Choose 0–3 points on the synthetic loop to flag as hazards.
+    """Pick a few points along the loop to flag with hazard diamonds.
 
-    Returns a list of dicts: ``{lat, lon, label, severity}`` where severity
-    is ``"warn"`` (yellow) or ``"avoid"`` (red). Used to drop FontAwesome
-    diamond markers on the topo map. Severity escalates with SAC grade and
-    with weather concerns (snow on summit, strong wind, heavy precip).
+    Returns a list of dictionaries with keys ``lat``, ``lon``, ``label``
+    and ``severity``. Severity is either ``"warn"`` (rendered yellow)
+    or ``"avoid"`` (rendered red). These get used by the Trail Detail
+    route map to drop diamond-shaped markers on top of the map.
+
+    Severity grows with the SAC grade (harder routes get red markers)
+    and with the weather (snow on the summit, strong wind, heavy rain
+    all push markers toward red).
     """
     if not pts:
         return []
 
-    # Conceptual midpoint = the synthetic "summit" of the loop.
+    # We treat the midpoint of our fake loop as the "summit" and the
+    # quarter and three-quarter points as ridge / descent sections.
+    # These three locations are where we'll attach hazard markers.
     summit = pts[len(pts) // 2]
     quarter = pts[len(pts) // 4]
     three_q = pts[3 * len(pts) // 4]
@@ -719,8 +782,9 @@ def hazard_points(
     grade = trail["difficulty"]
     out: list[dict] = []
 
-    # Grade-based markers: alpine grades flag the summit as exposed/serious;
-    # T3 gets a softer "surefootedness" warning at the same point.
+    # Markers based on SAC difficulty grade. Alpine routes get a red
+    # marker at the summit warning about exposure. T3 gets a yellow
+    # marker at the same spot reminding the user to be surefooted.
     if grade in {"T4", "T5", "T6"}:
         out.append({
             "lat": summit[0], "lon": summit[1],
@@ -734,8 +798,9 @@ def hazard_points(
             "severity": "warn",
         })
 
-    # Weather-based markers: snow at the summit, wind on the exposed
-    # 3/4 ridge, wet rock on the descent (1/4 point).
+    # Markers based on the weather snapshot. We add one for snow at the
+    # summit, one for strong wind on the exposed three-quarter ridge,
+    # and one for slippery wet rock on the descent (the quarter point).
     if snapshot:
         snowline = snapshot.get("snowline_m")
         if snowline is not None and snowline < trail["max_alt_m"]:

@@ -1,9 +1,13 @@
-"""Canton helpers — names, colour-coding aggregation for the Map page.
+"""Canton helpers. Powers the Map page's overview view.
 
-The Map page now drills down: first you see one bubble per canton coloured
-by the average verdict of its trails, then you click into a canton and
-see the individual trails. These helpers do the aggregation and provide
-human-readable canton names.
+The Map page works as a drill-down. First it shows one bubble per Swiss
+canton, where the bubble color is the average verdict of that canton's
+trails for the chosen date. Then if the user clicks a canton, it zooms
+into that canton's individual trails.
+
+This file does two things:
+    - Stores the human-readable canton names (BE -> "Bern", etc).
+    - Aggregates per-trail verdicts into one verdict per canton.
 """
 
 # =============================================================================
@@ -51,32 +55,41 @@ def canton_label(code: str) -> str:
 # Verdict aggregation
 # ---------------------------------------------------------------------------
 
-# Numeric scores let us average verdicts across all trails in a canton and
-# then band the mean back into a single label for display.
+# We can't average text labels like "SAFE" directly, so we map each
+# verdict to a number, average those, then map the average back to a
+# label. SAFE = 1, BORDERLINE = 2, AVOID = 3.
 _SCORE = {"SAFE": 1, "BORDERLINE": 2, "AVOID": 3}
 _BAND_TO_VERDICT = {1: "SAFE", 2: "BORDERLINE", 3: "AVOID"}
 
 
 def aggregate_by_canton(trails, target_date: date) -> dict[str, dict]:
-    """Group trails by canton, compute average verdict + centroid + count.
+    """Group all trails by their canton and return one summary per canton.
 
-    Returns a dict: ``{canton_code: {code, count, avg_score, verdict,
-    lat, lon, data_coverage_pct, trails}}``. ``verdict`` is a banded
-    SAFE/BORDERLINE/AVOID derived from ``avg_score`` (≤1.5 → SAFE,
-    ≤2.5 → BORDERLINE, else AVOID), or ``"—"`` if no data was cached
-    for any of the canton's trails.
+    For each canton we compute:
+        - count: how many trails it has.
+        - avg_score: average verdict score across its trails.
+        - verdict: SAFE if avg_score is at most 1.5, BORDERLINE up to 2.5,
+                   otherwise AVOID. Falls back to "no data" if we have no
+                   weather cached for any of the canton's trails.
+        - lat, lon: centroid (average position) used to place the bubble.
+        - data_coverage_pct: what fraction of the canton's trails have data.
+        - trails: the full list of trail rows (kept for the drill-down view).
 
-    Verdicts come from :func:`predictions.get_verdicts_for_date`, which
-    issues one batch query and caches for 1h — so this function makes
-    O(1) DB roundtrips regardless of trail count.
+    The predictions are fetched in a single batched call (and cached for
+    1 hour), so this function makes very few database trips even with
+    hundreds of trails.
     """
-    # Sorting trail ids gives a stable cache key for get_verdicts_for_date.
+    # We pass a sorted tuple of trail IDs as the cache key. Sorting matters
+    # because the cache function treats different orderings as different
+    # keys, and we don't want to recompute when the order changes.
     trail_ids = tuple(sorted(t["id"] for t in trails))
     verdicts = predictions.get_verdicts_for_date(
         target_date.isoformat(), trail_ids
     )
 
-    # First pass: group trails by canton, collecting coordinates and scores.
+    # First pass: walk through every trail and drop it in the right bucket
+    # for its canton. We collect its coordinates (for the centroid) and
+    # its verdict score (for the average).
     buckets: dict[str, dict] = {}
     for t in trails:
         b = buckets.setdefault(t["canton"], {
@@ -88,8 +101,10 @@ def aggregate_by_canton(trails, target_date: date) -> dict[str, dict]:
         v = verdicts.get(t["id"], {}).get("verdict", "—")
         b["scores"].append(_SCORE.get(v))
 
-    # Second pass: collapse each canton's bucket into a single summary dict
-    # (average verdict, centroid for the map marker, data coverage percent).
+    # Second pass: turn each bucket into one summary dictionary. The
+    # average score gets rounded to the nearest band (1, 2 or 3) and
+    # mapped back to a verdict label. If a canton has no usable scores
+    # at all, we mark it as "no data".
     out: dict[str, dict] = {}
     for code, b in buckets.items():
         valid_scores = [s for s in b["scores"] if s is not None]

@@ -1,14 +1,15 @@
-"""Compare — pit 2-4 trails against each other for a chosen date.
+"""Compare page. Lets the user put 2 to 4 trails side by side for one date.
 
-Single, self-contained workflow:
+The full workflow on this page:
 
-    1. Pick the date (page-local — no sidebar entanglement).
-    2. Pick 2-4 trails from a single multiselect.
-    3. See bar chart, radar chart, summary table side-by-side.
-    4. Open any of them in Trail Detail.
+    1. Pick a date (the picker lives on this page, not in the sidebar).
+    2. Pick between 2 and 4 trails from a single dropdown.
+    3. See a bar chart, a radar chart and a summary table side by side.
+    4. Open any of those trails in the Trail Detail page.
 
-When the user lands here from a Trail Detail "Compare with…" button,
-their preselected trail is added to the multiselect automatically.
+If the user got here by clicking "Compare with..." on a Trail Detail page,
+that trail is automatically added to the dropdown so they don't have to
+pick it again.
 """
 # =============================================================================
 # Source attribution
@@ -41,14 +42,19 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Compare needs at least 2 trails for a meaningful chart, capped at 4 to keep visuals readable.
+# A comparison only really makes sense with at least 2 trails. We cap it at 4
+# so the bar and radar charts stay readable (more than that looks cluttered).
 MIN_TRAILS: int = 2
 MAX_TRAILS: int = 4
 FORECAST_HORIZON_DAYS: int = 6
 
-# Map textual verdicts to numeric scores so we can plot them on a 1-3 bar scale.
+# To plot verdicts on a bar chart we turn each label into a number from 1 to 3.
+# SAFE = 1 (best), AVOID = 3 (worst), BORDERLINE sits in the middle.
 VERDICT_SCORE = {"SAFE": 1, "BORDERLINE": 2, "AVOID": 3}
-# Each radar axis: (snapshot key, display label, normalisation lo, normalisation hi).
+# Settings for each axis of the radar chart. Each entry is:
+# (key in the weather snapshot, label shown on the chart, min value, max value).
+# The min and max values are used to scale every reading onto a 0-100 scale
+# so wind in km/h and temperature in degrees stay visually comparable.
 RADAR_FIELDS = [
     ("temp_c", "Temp", -10, 30),
     ("wind_kmh", "Wind", 0, 80),
@@ -59,11 +65,17 @@ RADAR_FIELDS = [
 
 
 def _snapshot_for(trail, target_date):
-    """Cached snapshot for ``(trail, date)``; refresh once if missing."""
+    """Return the weather snapshot for a trail on a date.
+
+    First we check the local cache. If nothing is there for that date, we
+    force a refresh from the Open-Meteo API and try the cache again. If
+    that also fails (no internet, API down), we return None.
+    """
     snap = db_manager.get_weather_for_date(trail["id"], target_date)
     if snap is not None:
         return dict(snap)
-    # Specific date missing - force a refresh even if cache is "fresh".
+    # The cache had nothing for this date. We force a re-fetch even if
+    # other days are still fresh, because we specifically need this date.
     try:
         # Open-Meteo Forecast API - https://open-meteo.com/en/docs
         weather_fetcher.refresh_cache(
@@ -80,8 +92,9 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
     today = date.today()
 
     # Streamlit pattern - https://docs.streamlit.io
-    # Pre-seed the multiselect from session state (e.g. when arriving via
-    # a "Compare with…" button from the Trail Detail page).
+    # If the user just clicked "Compare with..." on a Trail Detail page,
+    # the trail ID was saved in session state. We use it to pre-fill the
+    # dropdown so the user doesn't have to re-pick their starting trail.
     st.markdown(
         section_heading(
             "Build your shortlist",
@@ -91,25 +104,31 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
         unsafe_allow_html=True,
     )
 
-    # Build {display label -> trail id} for the multiselect, and the reverse map for seeding.
+    # The multiselect dropdown needs nice text labels, but later we need the
+    # trail IDs to fetch data. So we build two dictionaries: one mapping
+    # label to ID, and a reverse one from ID back to label (used to figure
+    # out which label to pre-select if we arrived from Trail Detail).
     options = {
         f"{t['name']}  ·  {t['canton']}  ·  {t['difficulty']}": t["id"]
         for t in all_trails
     }
     label_for_id = {tid: lbl for lbl, tid in options.items()}
 
-    # If we arrived from Trail Detail's "Compare with…" button, preselect that trail.
+    # If a trail was preselected via the "Compare with..." button, find its
+    # display label so we can plug it into the multiselect's default value.
     preselected_label = None
     seed_id = st.session_state.pop("compare_seed_trail_id", None)
     if seed_id and seed_id in label_for_id:
         preselected_label = label_for_id[seed_id]
 
     # Streamlit pattern - https://docs.streamlit.io
-    # Two-column input: date picker (narrow) and trail multiselect (wide).
+    # Two columns side by side: a narrow date picker on the left, then a
+    # wider multiselect for the trails on the right.
     c1, c2 = st.columns([1, 3])
     with c1:
         max_date = today + timedelta(days=FORECAST_HORIZON_DAYS)
-        # Restore the previously chosen date from session state if it's still in range.
+        # If the user picked a date last time and that date is still in the
+        # 7-day window, we keep it. Otherwise we default back to today.
         _stored = st.session_state.get("compare_date")
         if isinstance(_stored, str):
             from datetime import datetime as _dt
@@ -138,7 +157,9 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
 
 
 # Adapted from Plotly Python docs - https://plotly.com/python/
-# Render a bar chart of risk scores (1=SAFE up to 3=AVOID) with one bar per trail.
+# Draw a bar chart showing the risk score for each trail. The bars use 1
+# for SAFE up to 3 for AVOID. The bar color matches the verdict color too,
+# so you can read it without checking the axis.
 def render_bar_chart(rows: list[dict]) -> None:
     st.markdown(
         section_heading(
@@ -180,7 +201,10 @@ def render_bar_chart(rows: list[dict]) -> None:
 
 
 # Adapted from Plotly Python docs - https://plotly.com/python/
-# Render a polar/radar chart that overlays each trail's normalised weather profile.
+# Draw a radar (polar) chart. Each trail becomes a colored shape with one
+# corner per weather variable (temp, wind, precip, cloud, snowline). We
+# normalise each value to a 0-100 scale so the shapes are comparable even
+# though the original units are very different.
 def render_radar_chart(rows: list[dict]) -> None:
     st.markdown(
         section_heading(
@@ -196,7 +220,9 @@ def render_radar_chart(rows: list[dict]) -> None:
     categories = [label for _, label, *_ in RADAR_FIELDS]
     for r in rows:
         snap = r["snapshot"] or {}
-        # Normalise each metric to a 0-100 scale using the (lo, hi) bounds in RADAR_FIELDS.
+        # Convert each weather number to a 0-100 score using the min and
+        # max values we defined in RADAR_FIELDS. This way temperature in
+        # degrees and wind in km/h can sit on the same chart together.
         normed = []
         for key, _, lo, hi in RADAR_FIELDS:
             val = snap.get(key)
@@ -204,7 +230,8 @@ def render_radar_chart(rows: list[dict]) -> None:
                 normed.append(0)
             else:
                 normed.append(max(0, min(1, (val - lo) / (hi - lo))) * 100)
-        # Close the polygon by repeating the first point at the end.
+        # A radar chart has to come back to its starting point to draw a
+        # closed shape, so we add the first value to the end of the list.
         fig.add_trace(
             go.Scatterpolar(
                 r=normed + [normed[0]],
@@ -235,7 +262,9 @@ def render_summary_table(rows: list[dict], target_date) -> None:
     )
     if not rows:
         return
-    # Build a tidy list-of-dicts that pandas turns straight into a table.
+    # We build a plain list of dictionaries first. Pandas will then turn
+    # that list straight into a table with one row per dictionary, which
+    # is the easiest way to feed data into st.dataframe.
     table = []
     for r in rows:
         snap = r["snapshot"] or {}
@@ -277,7 +306,8 @@ def render_summary_table(rows: list[dict], target_date) -> None:
         ),
         unsafe_allow_html=True,
     )
-    # One "open detail" button per trail. Clicking sets session state and navigates.
+    # One "Open" button per trail. When clicked, we save the trail ID and
+    # date into session state and switch over to the Trail Detail page.
     cols = st.columns(len(rows))
     for col, r in zip(cols, rows):
         if col.button(
@@ -286,7 +316,8 @@ def render_summary_table(rows: list[dict], target_date) -> None:
             width="stretch",
         ):
             # Streamlit pattern - https://docs.streamlit.io
-            # Pass context to Trail Detail via session state, then hard-navigate.
+            # Pass the trail and date to the Trail Detail page through
+            # session state, then jump to it with switch_page.
             st.session_state["selected_trail_id"] = r["trail_id"]
             st.session_state["selected_date"] = target_date
             st.switch_page("pages/Trail_Detail.py")
@@ -310,7 +341,8 @@ def main() -> None:
     all_trails = db_manager.get_all_trails()
     target_date, trail_ids = render_inputs(all_trails)
 
-    # Enforce the 2-4 trail selection rule; bail out early with a helpful hint.
+    # If the user picked fewer than 2 or more than 4 trails, we stop here
+    # and show a friendly message instead of drawing an empty chart.
     if not (MIN_TRAILS <= len(trail_ids) <= MAX_TRAILS):
         st.info(
             f"Select between **{MIN_TRAILS}** and **{MAX_TRAILS}** trails to "
@@ -318,11 +350,14 @@ def main() -> None:
         )
         return
 
-    # Risk tolerance (1-5) lives in the shared sidebar; default 3 if not yet set.
+    # The risk tolerance slider lives in the shared sidebar. It goes from
+    # 1 (very cautious) to 5 (bold). If the user hasn't moved it yet, we
+    # use 3 as a neutral default.
     risk = st.session_state.get("risk_tolerance", 3)
     rows = []
     aggregated_caveats: list[tuple[str, str]] = []
-    # For each selected trail: fetch snapshot, predict verdict, gather safety caveats.
+    # For each selected trail, we fetch the weather, predict a verdict, and
+    # collect any safety caveats so we can show them as warnings later.
     for tid in trail_ids:
         trail = db_manager.get_trail(tid)
         snap = _snapshot_for(trail, target_date)
@@ -349,7 +384,8 @@ def main() -> None:
             }
         )
 
-    # Tally verdicts for the summary "stat pills" row above the charts.
+    # Count how many trails fall into each verdict bucket so we can show
+    # the small summary pills above the charts.
     verdict_counts = {}
     for row in rows:
         verdict_counts[row["verdict"]] = verdict_counts.get(row["verdict"], 0) + 1

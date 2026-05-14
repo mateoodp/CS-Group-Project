@@ -1,4 +1,11 @@
-"""Route-specific image helpers for discovery cards."""
+"""Helpers that pick a nice picture for each trail card.
+
+For every trail we try, in order:
+    1. A hand-picked Wikimedia Commons photo we know is the real route.
+    2. A live search on Wikimedia Commons using the trail name and location.
+    3. As a last resort, a generic alpine photo from Unsplash, labelled
+       as illustrative so the user knows it isn't the actual trail.
+"""
 
 # =============================================================================
 # Source attribution
@@ -27,8 +34,9 @@ UNSPLASH_FALLBACK_IMAGE: str = (
 )
 FALLBACK_NOTICE: str = "Illustrative Unsplash image - not the actual route"
 
-# Stop-words for trail name tokenisation. Generic hiking terms make poor
-# search queries (they match thousands of unrelated images on Commons).
+# Common hiking words we strip out of trail names before searching. Words
+# like "loop" or "trail" match thousands of unrelated photos on Commons,
+# so we drop them and search using only the unique parts of the name.
 GENERIC_ROUTE_WORDS: set[str] = {
     "approach",
     "canton",
@@ -45,9 +53,10 @@ GENERIC_ROUTE_WORDS: set[str] = {
     "walk",
 }
 
-# Curated mapping of trail-name keywords to Wikimedia Commons filenames.
-# Used as the first lookup before falling back to the live search API,
-# guaranteeing high-quality images for the most popular routes.
+# For our most famous routes we just hard-code a Wikimedia Commons
+# filename we already know is a good picture. If a trail name contains
+# any of the keywords below, we go straight to that filename and skip
+# the live search. This guarantees the top routes always look great.
 KNOWN_ROUTE_IMAGE_FILES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("gornergrat",), "Aerial panorama of the Gornergrat 170622.jpg"),
     (("aletsch",), "Fieschertal VS - Aletsch Glacier (28235283066).jpg"),
@@ -74,14 +83,18 @@ def _row_value(row, key: str, default=None):
         return default
 
 
-# Build a Commons thumbnail URL for a given filename and pixel width.
+# Build a Wikimedia Commons thumbnail URL for a given filename and width.
+# Commons resizes the image for us when we hit this endpoint, so we don't
+# have to download a giant original every time.
 def _commons_thumb_url(filename: str, width: int = 900) -> str:
     normalized = filename.replace(" ", "_")
     return f"{COMMONS_THUMB_ENDPOINT}?f={quote(normalized, safe='')}&w={width}"
 
 
-# Strip accents and non-alphanumerics so token matches work across
-# Maennlichen / Maennlichen / Mannlichen spellings consistently.
+# Normalize a string for searching. We strip accents and anything that
+# isn't a letter or number. This is so a search for "Maennlichen" matches
+# a filename containing "Mannlichen" or "Männlichen", no matter how the
+# original was spelled.
 def _searchable_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.casefold())
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
@@ -142,20 +155,25 @@ def route_image_search_terms(trail) -> list[str]:
 
 
 # Streamlit caching pattern - https://docs.streamlit.io
-# Cache route image lookups for 24h - Wikimedia images change very rarely.
+# We cache image lookups for 24 hours. Wikimedia photos almost never
+# change, so a long TTL means we only hit the network once per route
+# per day. show_spinner=False hides the spinner Streamlit would otherwise
+# show on first call, since the lookup is fast enough not to need it.
 @st.cache_data(ttl=86400, show_spinner=False)
 def _route_image_info_cached(
     trail_name: str,
     canton: str,
     region: str,
 ) -> dict[str, str | bool]:
-    # Step 1: curated lookup - hand-picked images for well-known routes.
+    # Step 1: check our hand-picked list first. If the trail name matches
+    # one of our well-known routes we return that image straight away.
     known_url = _known_route_image_url(trail_name)
     if known_url:
         return {"url": known_url, "is_fallback": False, "notice": ""}
 
-    # Step 2: live Wikimedia Commons API search using progressively
-    # broader query terms; first matching image wins.
+    # Step 2: search Wikimedia Commons live. We try several query strings,
+    # starting with the most specific (trail name + canton + "hiking") and
+    # broadening if nothing matches. The first matching image wins.
     trail = {"name": trail_name, "canton": canton, "region": region}
     for term in route_image_search_terms(trail):
         images = fetch_trail_images(term, limit=5)
@@ -167,8 +185,10 @@ def _route_image_info_cached(
                     "is_fallback": False,
                     "notice": "",
                 }
-    # Step 3: nothing matched - fall back to a generic Alpine Unsplash photo
-    # tagged with a notice so we never mislead users about route imagery.
+    # Step 3: nothing matched. We return a generic alpine Unsplash photo
+    # along with a notice telling the user it's just a stock image, not
+    # the actual route. We never want to mislead users into thinking a
+    # random photo shows the trail they're about to hike.
     return _fallback_image_info()
 
 
@@ -207,8 +227,9 @@ def trail_id_from_query_params(query_params) -> int | None:
         raw = query_params.get("trail_id")
     except AttributeError:
         return None
-    # Older Streamlit returned lists for every param; newer versions return a
-    # plain string. Handle both shapes defensively.
+    # Older versions of Streamlit returned URL parameters as lists. Newer
+    # versions return plain strings. We handle both so the page works no
+    # matter which Streamlit version is installed.
     if isinstance(raw, (list, tuple)):
         raw = raw[0] if raw else None
     try:

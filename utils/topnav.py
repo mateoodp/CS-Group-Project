@@ -1,16 +1,18 @@
-"""Horizontal top navigation — replaces Streamlit's vertical sidebar nav.
+"""Horizontal top navigation bar. Replaces Streamlit's vertical sidebar nav.
 
-Call :func:`render_top_nav` at the very top of every page (right after
-``st.set_page_config``). It does three things:
+Every page should call ``render_top_nav()`` right after ``st.set_page_config``.
+The function does three things:
 
-    1. Injects CSS that hides Streamlit's auto-generated sidebar page list,
-       since we want a clean horizontal nav at the top instead.
-    2. Renders four equal-width ``st.page_link`` widgets (Find · Map ·
-       Compare · About) as a row.
-    3. Adds a thin separator below the nav so it visually anchors as a header.
+    1. Injects CSS that hides Streamlit's automatic sidebar page list,
+       because we want our own clean horizontal nav at the top instead.
+    2. Renders four equally-spaced page links (Find, Map, Compare, About)
+       as a single row using st.page_link.
+    3. Draws a thin line under the nav so visually it reads as a header.
 
-The Trail Detail page is deliberately **not** in the nav — users only
-reach it by clicking a hike from one of the four primary pages.
+Trail Detail is on purpose NOT in this nav. The only way to reach it is
+by clicking a trail card from Find, Map or Compare. We did this so the
+nav stays tidy and the user always lands on a real trail (not an empty
+Trail Detail page).
 """
 
 # =============================================================================
@@ -26,13 +28,15 @@ import streamlit as st
 
 
 # ---------------------------------------------------------------------------
-# Injected CSS - hides the default page list in the sidebar and tightens
-# the top-of-page padding so the horizontal nav reads as the real header.
+# The CSS below hides Streamlit's default sidebar page list and trims the
+# top-of-page padding so our horizontal nav reads as the real page header.
 # ---------------------------------------------------------------------------
 
 # Streamlit custom CSS pattern - https://docs.streamlit.io
-# CSS rules below target Streamlit's internal data-testid attributes to hide
-# default chrome (sidebar nav, toolbar) and re-style page-link buttons.
+# These selectors target the data-testid attributes that Streamlit puts
+# on its internal elements. We use them to hide pieces of the default UI
+# (the auto sidebar nav, the deploy/toolbar bar) and to restyle the
+# page-link buttons so they look like rounded pills.
 _NAV_CSS: str = """
 <style>
   /* Hide Streamlit's auto-generated sidebar page navigation. */
@@ -73,9 +77,9 @@ _NAV_CSS: str = """
 """
 
 
-# Single source of truth for the visible nav entries. Keep in sync with
-# the file paths under pages/ - this list drives both the rendered links
-# and any "back to {section}" buttons inside the Trail Detail page.
+# One source of truth for the four nav entries we show. Each tuple is
+# (page file path, label, icon). If we ever rename a page file, we update
+# it here in one place and the navigation stays consistent everywhere.
 NAV_ENTRIES: list[tuple[str, str, str]] = [
     ("pages/1_Find.py", "Find a hike", "🧭"),
     ("pages/2_Map.py", "Map", "🗺️"),
@@ -85,11 +89,13 @@ NAV_ENTRIES: list[tuple[str, str, str]] = [
 
 
 def render_top_nav() -> None:
-    """Render the horizontal top nav. Call once per page."""
+    """Draw the top navigation bar. Call this once per page."""
     # Streamlit custom CSS pattern - https://docs.streamlit.io
     st.markdown(_NAV_CSS, unsafe_allow_html=True)
 
-    # Layout: a wider brand column on the left, then equal-width nav entries.
+    # The left column is twice as wide because it holds the app brand,
+    # which has a longer label. The other columns are equal width, one
+    # per nav entry.
     cols = st.columns([2] + [1] * len(NAV_ENTRIES), gap="small")
     with cols[0]:
         st.page_link(

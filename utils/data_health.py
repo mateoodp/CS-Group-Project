@@ -1,18 +1,21 @@
-"""Automatic background weather caching — no user button required.
+"""Automatic background weather caching. No "refresh" button needed.
 
-The user shouldn't have to think about whether the cache is warm. Pages
-call :func:`ensure_weather_cached` near the top of their ``main()`` and
-this module silently fetches anything missing for *today's* date,
-showing a brief spinner only on the first run of the day.
+The user should never have to think about whether the weather cache is
+up to date. So at the top of each page's ``main()`` we call
+``ensure_weather_cached(...)``. This module quietly fetches any missing
+forecasts for today's date in the background. It only shows a spinner
+on the first run, and only briefly.
 
-Tuning notes:
+A few tuning choices worth knowing:
 
-* **4 parallel workers** — friendlier to Open-Meteo than 8. Burst
-  requests above ~10 concurrent get rate-limited (we observed this
-  during validation runs).
-* **One retry** with ``force=True`` if the first request times out.
-* Always cached in ``st.session_state`` — never re-runs more than once
-  per Streamlit session for the same trail set.
+* 4 parallel workers. We tested with 8, but Open-Meteo started rate
+  limiting us around 10 concurrent requests. 4 is comfortably under
+  the limit and still gives a good speedup.
+* One retry. If the first attempt fails, we try one more time with
+  ``force=True`` (which clears any stale partial cache). After that
+  we give up and the page treats the trail as having no data.
+* We memoise in ``st.session_state`` so this only runs once per
+  Streamlit session for the same group of trails.
 """
 
 # =============================================================================
@@ -36,9 +39,10 @@ MAX_RETRIES: int = 1
 
 
 def _fetch_one(trail) -> bool:
-    """Refresh one trail's cache. Retry once on failure."""
-    # Retry loop: first attempt uses normal caching; the retry passes
-    # force=True to bypass any stale partial cache that triggered the failure.
+    """Refresh one trail's weather cache. Returns True on success."""
+    # We try at most twice. The first attempt respects the existing cache.
+    # If it fails (typically a network error), the second attempt sets
+    # force=True so any partly-written cache gets overwritten cleanly.
     for attempt in range(MAX_RETRIES + 1):
         try:
             weather_fetcher.refresh_cache(
@@ -73,15 +77,16 @@ def ensure_weather_cached(
     target_date: date | None = None,
     quiet: bool = False,
 ) -> tuple[int, int]:
-    """Fetch missing forecasts for the given trails, in the background.
+    """Make sure each trail has a cached forecast for the target date.
 
-    Idempotent within a Streamlit session: if we've already attempted to
-    cover the same trail set, we don't re-run. ``page_key`` namespaces
-    the once-per-session memo (e.g. ``"map"``, ``"compare"``).
+    Safe to call as many times as you want during a Streamlit session.
+    The function remembers what it's already tried and won't redo the
+    work. ``page_key`` lets each page keep its own memo (so "map" and
+    "compare" can both run without stepping on each other).
 
-    Returns ``(succeeded, failed)``. When ``quiet=True`` no UI is shown
-    even on first run — useful for very small trail sets where the
-    fetch is essentially instant.
+    Returns a tuple of ``(succeeded_count, failed_count)``. If you set
+    ``quiet=True`` we skip the spinner UI on the first run too, which
+    is nice for very small trail lists where the fetch is fast anyway.
     """
     target_date = target_date or date.today()
     missing = trails_missing_for_date(trails, target_date)
@@ -89,10 +94,14 @@ def ensure_weather_cached(
         return 0, 0
 
     # Streamlit session state pattern - https://docs.streamlit.io/library/api-reference/session-state
-    # Use a per-page, per-date memo key so each page fetches at most once per session.
+    # Build a memo key combining the page name and the target date. If this
+    # key already exists in session state, we've tried this combination
+    # before and we don't need to try again.
     memo_key = f"_data_health_done__{page_key}__{target_date.isoformat()}"
     if st.session_state.get(memo_key):
-        # Already attempted in this session; surface failures count only.
+        # We already attempted the fetch in this session. We still report
+        # the count of trails that are missing data, so the page can show
+        # the user a small warning if needed.
         return 0, len(missing)
 
     if not quiet:
@@ -116,10 +125,12 @@ def ensure_weather_cached(
 
 
 def _do_fetch(trails) -> tuple[int, int]:
-    """Run the parallel fetch. Returns (ok, failed)."""
+    """Fetch all the trails in parallel. Returns (ok_count, failed_count)."""
     succeeded = failed = 0
     # ThreadPoolExecutor pattern - https://docs.python.org/3/library/concurrent.futures.html
-    # Bounded concurrency keeps us well under Open-Meteo's rate limits.
+    # We limit ourselves to PARALLEL_WORKERS workers at a time. This keeps
+    # the total request rate well under Open-Meteo's limit and is fast
+    # enough that the page feels responsive.
     with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
         futures = [ex.submit(_fetch_one, t) for t in trails]
         for fut in as_completed(futures):

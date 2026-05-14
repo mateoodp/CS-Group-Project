@@ -1,15 +1,16 @@
-"""Map — drill-down view of Switzerland by canton then by trail.
+"""Map page. Lets the user explore Switzerland by canton, then by trail.
 
-Two states, gated by ``st.session_state["map_selected_canton"]``:
+The page has two views. Which one shows up depends on whether a canton
+has been chosen, which we track using ``st.session_state["map_selected_canton"]``:
 
-    * **Overview** — one bubble per canton, coloured by the average
-      verdict of its trails for the chosen date, sized by trail count.
-      A button grid below the map mirrors the action so users with
-      flaky map clicks can still drill in.
+    * Overview view: one bubble per canton on the Swiss map. The color
+      shows the average verdict for that canton on the chosen date, and
+      the size shows how many trails it has. A grid of buttons under the
+      map does the same thing in case the map clicks are not responsive.
 
-    * **Drill-down** — when a canton is selected, the map zooms to that
-      canton's bounding box and shows individual trails as markers. A
-      "← Back to all cantons" button returns to the overview.
+    * Drill-down view: once a canton is selected, the map zooms in and
+      shows that canton's individual trails as markers. The user can go
+      back to the overview with the back button.
 """
 
 # =============================================================================
@@ -52,7 +53,8 @@ st.set_page_config(
 
 FORECAST_HORIZON_DAYS: int = 6
 
-# Map verdict labels to colour strings that folium's built-in palette understands.
+# Folium's marker palette only accepts specific color names, so we translate
+# our verdict labels into the closest matching folium color.
 # Adapted from folium docs - https://python-visualization.github.io/folium/
 _FOLIUM_COLOUR_MAP = {
     "SAFE": "green",
@@ -68,8 +70,10 @@ _FOLIUM_COLOUR_MAP = {
 
 
 def render_date_picker() -> date:
-    """Page-local date picker for the map. Returns the chosen date."""
-    # Open-Meteo only covers today + 6 days so we clamp the date range to match.
+    """Show a date picker just for this page. Returns the date the user picked."""
+    # The Open-Meteo free forecast only covers today and the next 6 days, so
+    # we restrict the date picker to that window. Anything outside would have
+    # no weather data for us to use.
     today = date.today()
     chosen = st.date_input(
         "📅 Date to assess",
@@ -89,9 +93,14 @@ def render_date_picker() -> date:
 
 
 def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
-    """Folium map: one bubble per canton. Returns clicked-canton code or None."""
+    """Draw the Switzerland map with one bubble per canton.
+
+    Returns the code of the canton the user clicked, or None if they
+    didn't click on anything.
+    """
     # Adapted from folium docs - https://python-visualization.github.io/folium/
-    # Map is centred on Switzerland; tile source is OpenStreetMap (free).
+    # We start the map centered on Switzerland. OpenStreetMap is the free
+    # default tile provider, no API key needed.
     fmap = folium.Map(
         location=[CH_CENTRE_LAT, CH_CENTRE_LON],
         zoom_start=DEFAULT_MAP_ZOOM,
@@ -100,7 +109,8 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
 
     for code, d in sorted(canton_data.items()):
         colour = _FOLIUM_COLOUR_MAP.get(d["verdict"], "gray")
-        # Radius scales with trail count (bigger canton = bigger bubble).
+        # The bubble grows when the canton has more trails. We cap it at 35
+        # trails so big cantons don't draw a huge bubble that covers others.
         radius = 12 + min(d["count"], 35) * 0.6
         coverage = (
             f"<br>Data coverage: {d['data_coverage_pct']:.0f}%"
@@ -115,7 +125,8 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
             f"{coverage}<br>"
             f"<i>Click marker again or use the button below to drill in.</i>"
         )
-        # CircleMarker is used (not Marker) so we can size it with trail count.
+        # We use CircleMarker (not the default Marker pin) because we want
+        # to control the size of the bubble based on trail count.
         folium.CircleMarker(
             location=[d["lat"], d["lon"]],
             radius=radius,
@@ -128,8 +139,9 @@ def render_canton_overview_map(canton_data: dict[str, dict]) -> str | None:
             tooltip=code,  # used to capture click → drill-down
         ).add_to(fmap)
 
-    # st_folium bridges click events from the browser back into Streamlit.
-    # We only ask for the tooltip of the last-clicked object to keep payload small.
+    # st_folium is the helper that connects folium maps with Streamlit. It
+    # sends click events from the browser back to Python. We only ask for
+    # the tooltip of the last thing the user clicked, to keep things fast.
     out = st_folium(
         fmap,
         width=None,
@@ -150,14 +162,16 @@ def render_canton_button_grid(canton_data: dict[str, dict]) -> None:
         ),
         unsafe_allow_html=True,
     )
-    # Sort by trail count descending, then code alphabetically so the busiest
-    # cantons land in the first row of the grid.
+    # Sort cantons so the ones with the most trails come first. If two
+    # cantons have the same count, we sort them alphabetically. This way
+    # the most useful buttons are always on the first row of the grid.
     cantons_sorted = sorted(
         canton_data.items(),
-        key=lambda kv: (-(kv[1]["count"]), kv[0]),  # bigger first, then alpha
+        key=lambda kv: (-(kv[1]["count"]), kv[0]),  # most trails first, then by code
     )
     cols_per_row = 6
-    # Compute the number of rows with ceiling division (no math.ceil dependency).
+    # Work out how many rows of buttons we need. We use integer math to
+    # round up instead of importing math.ceil just for one calculation.
     rows_needed = (len(cantons_sorted) + cols_per_row - 1) // cols_per_row
     idx = 0
     for _ in range(rows_needed):
@@ -198,11 +212,15 @@ def render_summary_metrics(canton_data: dict[str, dict]) -> None:
 
 
 def _verdict_for_trail(trail, target_date: date) -> tuple[str, float]:
-    """Cache lookup → (verdict, confidence)."""
-    from utils import predictions  # local to avoid pandas import on cold load
+    """Look up the verdict and confidence for one trail on one date."""
+    # We import predictions here (inside the function) instead of at the top
+    # of the file. This way pandas only gets loaded if the user actually
+    # opens the map drill-down view, which makes the cold start faster.
+    from utils import predictions
 
-    # Read-only: this map view never triggers fetches itself, so an empty
-    # snapshot means we surface "no data" instead of stalling.
+    # This function only reads from the cache, it never fetches new weather
+    # from the API. If there's no saved weather for this date, we show
+    # "no data" instead of making the user wait for a download.
     snap = db_manager.get_weather_for_date(trail["id"], target_date)
     if snap is None:
         return "—", 0.0
@@ -215,12 +233,17 @@ def _verdict_for_trail(trail, target_date: date) -> tuple[str, float]:
 def render_canton_drilldown_map(
     trails, canton_code: str, target_date: date
 ) -> str | None:
-    """Folium map of one canton's trails. Returns clicked-trail name or None."""
+    """Draw a zoomed-in map of one canton's trails.
+
+    Returns the name of the trail the user clicked, or None if nothing
+    was clicked.
+    """
     if not trails:
         st.info(f"No trails recorded for {canton_label(canton_code)}.")
         return None
 
-    # Centre the map on the average position of the canton's trails.
+    # We center the map on the middle point of the canton's trails. The
+    # "centroid" is just the average latitude and average longitude.
     lats = [t["lat"] for t in trails]
     lons = [t["lon"] for t in trails]
     centre_lat = sum(lats) / len(lats)
@@ -232,7 +255,8 @@ def render_canton_drilldown_map(
         zoom_start=10,
         tiles="OpenStreetMap",
     )
-    # Auto-zoom to a bounding box that contains every marker (+ a small pad).
+    # Tell folium to zoom in so that all the trail markers fit on screen.
+    # We add a small bit of padding so nothing sits right on the edge.
     fmap.fit_bounds(
         [
             [min(lats) - 0.05, min(lons) - 0.05],
@@ -240,7 +264,8 @@ def render_canton_drilldown_map(
         ]
     )
 
-    # One CircleMarker per trail, coloured by its predicted verdict.
+    # Draw one circle marker for each trail and color it based on the verdict
+    # we predicted for the chosen date.
     for t in trails:
         verdict, conf = _verdict_for_trail(t, target_date)
         colour = _FOLIUM_COLOUR_MAP.get(verdict, "gray")
@@ -293,7 +318,9 @@ def render_drilldown_picker(trails, target_date: date) -> None:
     chosen = st.selectbox(
         "Trail", list(options.keys()), index=0, key="drilldown_trail_select"
     )
-    # Same pattern as the Find page: stash IDs in session_state then navigate.
+    # Same trick as the Find page: we save the trail ID and date into
+    # session state, then switch to the Trail Detail page. Session state
+    # is how Streamlit pages share information with each other.
     if st.button("→ Open trail detail", type="primary", width="stretch"):
         st.session_state["selected_trail_id"] = options[chosen]
         st.session_state["selected_date"] = target_date
@@ -325,7 +352,9 @@ def main() -> None:
 
     all_trails = db_manager.get_all_trails()
 
-    # Auto-fetch any missing forecasts (4-worker pool, once per session).
+    # If any trails have no cached weather for this date, fetch them in
+    # the background. This only runs once per session (so users don't
+    # wait every time they come back to the page).
     # Open-Meteo Forecast API - https://open-meteo.com/en/docs
     _, n_failed = ensure_weather_cached(
         all_trails, page_key="map", target_date=chosen_date
@@ -336,7 +365,9 @@ def main() -> None:
             "Open-Meteo rate-limit). Refresh the page to retry."
         )
 
-    # Drill-down vs overview is driven by a single session_state key.
+    # We use one session state value to decide which view to show. If a
+    # canton code is stored there, we render the drill-down view. If not,
+    # we render the overview of all of Switzerland.
     selected = st.session_state.get("map_selected_canton")
 
     # ============================================================
@@ -385,11 +416,15 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # Pre-aggregate trail counts and per-canton verdict for the chosen date.
+    # Group the trails by canton ahead of time. For each canton we compute
+    # the average verdict and the number of trails, so the map can use them
+    # right away to size and color the bubbles.
     canton_data = aggregate_by_canton(all_trails, chosen_date)
     render_summary_metrics(canton_data)
 
-    # If the user clicked a bubble, store the canton code and rerun in drill-down mode.
+    # If the user clicked on a canton bubble, save that canton code in
+    # session state and rerun the page. Next time around the drill-down
+    # view will run instead of the overview.
     clicked_canton = render_canton_overview_map(canton_data)
     if clicked_canton and clicked_canton in canton_data:
         st.session_state["map_selected_canton"] = clicked_canton

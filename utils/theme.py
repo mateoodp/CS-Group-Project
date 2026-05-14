@@ -1,9 +1,11 @@
-"""Shared visual system for the Streamlit hiking app.
+"""Shared look and feel for the whole app.
 
-The functions here keep page-level styling consistent without touching
-business logic. Pages can opt into the same alpine discovery look by calling
-``apply_app_theme()`` and rendering small HTML helpers with
-``unsafe_allow_html=True``.
+This file holds the CSS that gives every page the same alpine look:
+colors, fonts, card styles, hero banner, and so on. None of the
+business logic lives here. To use this style, a page just calls
+``apply_app_theme()`` at the top and uses the small HTML helpers
+(``page_hero``, ``section_heading``, ``stat_pills_html``, ``status_pill``)
+when it needs a styled component.
 """
 
 # =============================================================================
@@ -22,15 +24,19 @@ import streamlit as st
 
 
 # Unsplash CDN photo - https://unsplash.com
-# Hero background used by every page; URL params request an auto-format,
-# cropped, large (1800 px wide) version for a crisp full-bleed backdrop.
+# This is the alpine background photo we use behind every page. The URL
+# parameters tell Unsplash to give us a 1800-pixel-wide version, auto
+# format and cropped, which keeps the page sharp without downloading a
+# huge file.
 ALPINE_BACKGROUND_IMAGE: str = (
     "https://images.unsplash.com/photo-1506905925346-21bda4d32df4"
     "?auto=format&fit=crop&w=1800&q=85"
 )
 
-# Stock photo rotation used by the discovery cards. image_for_index() cycles
-# through this tuple deterministically so the same trail keeps the same image.
+# A rotation of six alpine photos. The discovery cards use these as
+# placeholders if we don't have a real trail photo. image_for_index()
+# always returns the same picture for the same card position, so the
+# same trail card never randomly changes its image between reruns.
 ALPINE_CARD_IMAGES: tuple[str, ...] = (
     "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=900&q=85",
     "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=900&q=85",
@@ -42,9 +48,10 @@ ALPINE_CARD_IMAGES: tuple[str, ...] = (
 
 
 # Streamlit custom CSS pattern - https://docs.streamlit.io
-# Single CSS payload injected once per page via apply_app_theme(). The
-# :root custom properties below act as the design tokens (background,
-# ink, pine green, moss, amber, danger, etc.) reused across components.
+# This big CSS string gets injected once per page via apply_app_theme().
+# The variables defined under :root act as our "design palette". By
+# referencing var(--pine) inside other rules we can change the color
+# in one place and everything updates together.
 APP_THEME_CSS: str = (
     """
 <style>
@@ -351,22 +358,28 @@ APP_THEME_CSS: str = (
   }
 </style>
 """.replace(
-        # Substitute the Unsplash hero URL into the CSS template at module
-        # import time so the rendered stylesheet contains an absolute URL.
+        # Drop the actual Unsplash URL into the CSS string when this module
+        # is first imported. We use a placeholder (__ALPINE_BACKGROUND_IMAGE__)
+        # because Python's regular string formatting would clash with the
+        # curly braces already used by CSS.
         "__ALPINE_BACKGROUND_IMAGE__", ALPINE_BACKGROUND_IMAGE
     )
 )
 
 
 def apply_app_theme() -> None:
-    """Inject the shared alpine discovery theme."""
+    """Inject the shared theme. Every page should call this once."""
     # Streamlit custom CSS pattern - https://docs.streamlit.io
-    # unsafe_allow_html is required to inject raw <style> tags.
+    # We need unsafe_allow_html=True because by default Streamlit
+    # escapes any HTML for safety. Since we trust our own CSS, we
+    # turn that off here so the style block actually takes effect.
     st.markdown(APP_THEME_CSS, unsafe_allow_html=True)
 
 
-# Loose label-to-class matcher so pages can pass things like "SAFE today"
-# or "Borderline" and still pick up the correct pill colour.
+# Convert any verdict-like label into the matching CSS class name. We
+# use case-insensitive matching and strip out the word "today" so the
+# pages can pass labels like "SAFE today" or "Borderline" and still
+# get the correct pill color.
 def status_class(label: str | None) -> str:
     """Return a CSS class for a verdict-like label."""
     normalized = str(label or "").lower().replace("today", "").strip()
@@ -379,17 +392,20 @@ def status_class(label: str | None) -> str:
     return "unknown"
 
 
-# Modulo wrap means callers can pass any non-negative integer and get a
-# deterministic image - same index always yields the same picture.
+# We use the modulo operator so any non-negative card number wraps back
+# around to a valid spot in the image list. The same card number always
+# returns the same picture, so the page never flickers between images.
 def image_for_index(index: int) -> str:
     """Return a stable alpine card image for a zero-based card index."""
     return ALPINE_CARD_IMAGES[index % len(ALPINE_CARD_IMAGES)]
 
 
 def page_hero(title: str, subtitle: str, eyebrow: str = "Swiss Hike Forecaster") -> str:
-    """HTML for a consistent page hero."""
-    # html.escape() guards against any user-supplied content sneaking HTML
-    # into the page even though current callers pass only static strings.
+    """Return the HTML for the big banner at the top of a page."""
+    # We run every piece of text through html.escape() before putting it
+    # in the HTML. Right now all callers pass static strings, but if
+    # anyone ever forwarded user input here, escaping protects us from
+    # someone injecting their own HTML or scripts.
     return (
         '<div class="page-hero">'
         f'<div class="page-eyebrow">{escape(eyebrow)}</div>'
@@ -414,8 +430,9 @@ def section_heading(title: str, subtitle: str, eyebrow: str | None = None) -> st
     )
 
 
-# Render an inline row of small statistic pills (e.g. distance, ascent,
-# difficulty) from a sequence of (label, value) tuples.
+# Build a row of small "stat pills" from a list of (label, value) pairs.
+# Example: stat_pills_html([("distance", "8 km"), ("ascent", "650 m")]).
+# Each pair becomes one little pill in the row.
 def stat_pills_html(items: Iterable[tuple[str, str]]) -> str:
     """Render small statistic pills from ``(label, value)`` pairs."""
     pills = "".join(

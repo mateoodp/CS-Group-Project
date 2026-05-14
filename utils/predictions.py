@@ -1,9 +1,10 @@
-"""Verdict helper — wraps the ML model with a rule-based fallback.
+"""Verdict helper. Wraps the ML model and provides a rule-based fallback.
 
-Other pages should never call ``trail_classifier.predict`` directly: if the
-model isn't trained yet, that raises FileNotFoundError. This helper falls
-back to the transparent rule-based ``label_engine`` so the UI always has
-something to display.
+Pages should never call ``trail_classifier.predict`` directly. If the
+model hasn't been trained yet, that would crash with FileNotFoundError.
+Instead they should go through this module. If no trained model exists,
+we automatically fall back to the simple rule-based ``label_engine``,
+so the UI always has something to display.
 """
 
 # =============================================================================
@@ -26,17 +27,21 @@ from ml import trail_classifier
 from utils.constants import VERDICT_COLOURS
 
 
-# Ordinal scale for the three verdicts. Shifting an index by +/-1 maps directly
-# to a step toward AVOID or SAFE, which keeps the risk-tolerance math trivial.
+# We line up the three verdicts on a 0/1/2 scale. SAFE is the calmest end,
+# AVOID is the most cautious end. Putting them on a number line means we
+# can move "one step toward AVOID" simply by adding 1, which makes the
+# risk tolerance math very simple.
 VERDICT_ORDER = {"SAFE": 0, "BORDERLINE": 1, "AVOID": 2}
-# Positive shift = harsher verdict (toward AVOID). Cautious users (risk=1)
-# pull the verdict one step toward AVOID; bold users (risk=5) pull it one
-# step toward SAFE. Risks 2–4 leave the verdict alone.
+# Risk tolerance is a 1-to-5 slider. We translate it into an offset.
+# A positive offset makes the verdict harsher (closer to AVOID). A negative
+# offset makes it softer (closer to SAFE). Settings 2, 3 and 4 in the
+# middle leave the verdict unchanged.
 RISK_THRESHOLD_SHIFT = {1: +1, 2: 0, 3: 0, 4: 0, 5: -1}
 
-# SAC grades that carry inherent terrain risk regardless of weather. We
-# never let these be displayed as SAFE, and on T5/T6 any non-trivial
-# weather concern bumps the verdict to AVOID.
+# These SAC difficulty grades are dangerous on their own, no matter how
+# nice the weather is. We never let any of these trails display as SAFE.
+# On the two highest grades (T5, T6) any real weather concern is enough
+# to push the verdict all the way to AVOID.
 HARD_GRADES: frozenset[str] = frozenset({"T4", "T5", "T6"})
 EXTREME_GRADES: frozenset[str] = frozenset({"T5", "T6"})
 
@@ -50,8 +55,9 @@ DIFFICULTY_NAMES: dict[str, str] = {
 }
 
 
-# Convert a raw weather DB row into the exact feature vector the Random
-# Forest was trained on. Defaulting None to 0.0 mirrors the training pipeline.
+# Take a weather snapshot (one row from the weather_snapshots table) and
+# turn it into the seven numbers the Random Forest expects. Any missing
+# value is replaced with 0.0, which is how we trained the model too.
 def _features_from_snapshot(snap: dict, trail_max_alt_m: float) -> dict:
     """Derive the 7 ML features from a single weather_snapshots row dict."""
     temp = snap.get("temp_c") or 0.0
@@ -75,13 +81,18 @@ def _features_from_snapshot(snap: dict, trail_max_alt_m: float) -> dict:
 def predict_for_snapshot(
     snapshot: dict, trail_max_alt_m: float
 ) -> tuple[str, float, list[tuple[str, float]], str]:
-    """Return ``(verdict, confidence, top_features, source)``.
+    """Predict a verdict for one trail on one day.
 
-    ``source`` is ``"ml"`` if the trained Random Forest produced the verdict,
-    or ``"rules"`` if it fell back to the rule-based label engine.
+    Returns a tuple of:
+        - verdict label: SAFE, BORDERLINE or AVOID
+        - confidence: a number from 0 to 1
+        - top_features: the three features that mattered most
+        - source: either "ml" (trained model) or "rules" (fallback)
     """
-    # Prefer the trained ML model when available; on any failure (corrupt
-    # pickle, missing feature, etc.) silently fall through to the rules engine.
+    # If a trained model exists, we try it first. If anything goes wrong
+    # while loading it or running it (corrupted file, missing feature),
+    # we quietly fall through to the rule engine. This way the UI is
+    # always able to show something instead of crashing.
     if trail_classifier.model_exists():
         try:
             features = _features_from_snapshot(snapshot, trail_max_alt_m)
@@ -110,23 +121,30 @@ def ensure_forecast_for_trail(trail_row) -> None:
 def apply_risk_tolerance(
     verdict: str, risk: int, difficulty: str | None = None
 ) -> str:
-    """Adjust the displayed verdict for the user's risk tolerance.
+    """Take the model's verdict and adjust it for the user's risk tolerance.
 
-    Risk = 1 (cautious): demote one step (SAFE→BORDERLINE, BORDERLINE→AVOID).
-    Risk = 5 (bold)    : promote one step (AVOID→BORDERLINE, BORDERLINE→SAFE).
-    Risk 2–4          : no change. The *model* is unchanged — only display.
+    Risk = 1 (very cautious): make the verdict one step harsher
+        (SAFE becomes BORDERLINE, BORDERLINE becomes AVOID).
+    Risk = 5 (bold): make the verdict one step softer
+        (AVOID becomes BORDERLINE, BORDERLINE becomes SAFE).
+    Risk = 2, 3 or 4: no change.
 
-    Safety lock: if ``difficulty`` is in :data:`HARD_GRADES` (T4–T6), a bold
-    user is **never** allowed to push the verdict to SAFE. The slider
-    expresses confidence in your judgement, not the inherent grade of the
-    route — and a T4+ hike is always serious terrain.
+    Note that we only change what gets DISPLAYED. The model itself is
+    untouched. The slider is just about how the user wants to interpret
+    the same prediction.
+
+    Safety lock: if the trail is T4, T5 or T6, a bold user is never
+    allowed to push the verdict to SAFE. The slider expresses your
+    confidence in your own judgement, not the grade of the route, and
+    these alpine grades are always serious terrain.
     """
     shift = RISK_THRESHOLD_SHIFT.get(risk, 0)
     code = VERDICT_ORDER[verdict] + shift
-    code = max(0, min(2, code))  # clamp into the 0..2 verdict range
+    # Clamp the result so we don't go below SAFE or above AVOID.
+    code = max(0, min(2, code))
     new = {0: "SAFE", 1: "BORDERLINE", 2: "AVOID"}[code]
-    # Hard safety lock: T4+ terrain is never displayed as SAFE no matter how
-    # bold the user has set the slider.
+    # Hard safety rule: T4 to T6 routes can never display as SAFE even
+    # if the user has set the slider to the boldest setting.
     if difficulty in HARD_GRADES and new == "SAFE":
         return "BORDERLINE"
     return new
@@ -135,28 +153,31 @@ def apply_risk_tolerance(
 def apply_difficulty_floor(
     verdict: str, trail, snapshot: Optional[dict]
 ) -> tuple[str, list[str]]:
-    """Cap the verdict by the trail's intrinsic difficulty.
+    """Cap the verdict based on how technical the trail is.
 
-    Returns ``(verdict, caveats)``. ``caveats`` is a list of plain-text
-    reasons explaining each adjustment — surface these in the UI so users
-    understand *why* a sunny T5 isn't being marked SAFE.
+    Even if the weather is perfect, some trails are inherently dangerous
+    because of the terrain. This function enforces that.
+
+    Returns a tuple of (final_verdict, caveats). The caveats list holds
+    plain-English reasons for any adjustment. We pass those up so the
+    UI can explain to the user why a sunny T5 isn't being marked SAFE.
 
     Rules:
 
-    * **T4+** (alpine hike or harder): can never be SAFE. SAFE is bumped
-      to BORDERLINE.
-    * **T5/T6** (alpine grades): any meaningful weather concern (wind ≥ 30
-      km/h, precipitation ≥ 2 mm, or snowline within 200 m of the summit)
-      bumps the verdict all the way to AVOID. Sustained exposure with
-      anything less than perfect conditions is a stop sign.
-    * **T3**: stays as the weather suggests, but a SAFE verdict carries
-      a caveat that surefootedness is required.
+    * T4, T5 or T6 (alpine grades): can never be SAFE. If the model
+      said SAFE we bump it to BORDERLINE.
+    * T5 or T6: any real weather concern bumps the verdict straight to
+      AVOID. "Real concern" means wind at least 30 km/h, precipitation
+      at least 2 mm, or the snowline is within 200 m of the trail's
+      summit. On exposed alpine terrain there's no margin for error.
+    * T3: we leave the verdict alone, but if it's SAFE we attach a
+      caveat reminding the user that T3 still requires surefootedness.
     """
     difficulty = trail["difficulty"]
     caveats: list[str] = []
     final = verdict
 
-    # Rule 1: no SAFE on T4-T6, regardless of weather.
+    # Rule 1: T4 to T6 routes can never be SAFE, no matter the weather.
     if difficulty in HARD_GRADES and final == "SAFE":
         final = "BORDERLINE"
         caveats.append(
@@ -167,9 +188,9 @@ def apply_difficulty_floor(
             "for the *weather*, not for the *route*."
         )
 
-    # Rule 2: on T5/T6 any non-trivial weather concern downgrades the
+    # Rule 2: on T5 and T6, any meaningful weather concern pushes the
     # verdict all the way to AVOID. The thresholds below are deliberately
-    # tight; on alpine terrain there is no margin for error.
+    # strict because on alpine terrain there's no room to be wrong.
     if difficulty in EXTREME_GRADES and snapshot:
         wind = snapshot.get("wind_kmh") or 0.0
         precip = snapshot.get("precip_mm") or 0.0
@@ -211,11 +232,15 @@ def adjust_verdict(
     snapshot: Optional[dict],
     risk: int,
 ) -> tuple[str, list[str]]:
-    """Apply the difficulty floor, then the user's risk tolerance.
+    """Run the full verdict adjustment pipeline.
 
-    This is the single entry point pages should use to convert a raw
-    weather verdict into a displayed verdict. Returns the final verdict
-    plus a list of safety caveats to surface in the UI.
+    Pages should call this single function (not the individual rules
+    below) to turn a raw model verdict into the verdict shown to the
+    user. We apply the difficulty floor first (terrain wins over weather)
+    and then the user's risk tolerance.
+
+    Returns (final_verdict, caveats). The caveats list contains
+    plain-English warning messages the UI should show.
     """
     floored, caveats = apply_difficulty_floor(weather_verdict, trail, snapshot)
     final = apply_risk_tolerance(floored, risk, difficulty=trail["difficulty"])
@@ -227,31 +252,37 @@ def verdict_colour(verdict: str) -> str:
 
 
 # Streamlit caching pattern - https://docs.streamlit.io/library/advanced-features/caching
-# Cache the batched verdict lookup for 1 hour, keyed on (date, trail-id tuple).
+# We cache this function's results for one hour. The cache key is the
+# (date, list-of-trail-ids) pair. This way, if the user opens the same
+# page again or filters in a way that hits the same trails, we return
+# the cached verdicts instantly instead of re-running the model.
 @st.cache_data(ttl=3600)
 def get_verdicts_for_date(
     snapshot_date_iso: str, trail_ids: tuple[int, ...]
 ) -> dict[int, dict]:
-    """Difficulty-floored verdicts for many trails on one date — batched + cached.
+    """Compute verdicts for many trails on one date in a single batch.
 
-    One JOIN query for snapshots, one query for trail metadata, one model
-    load, one vectorised :func:`trail_classifier.predict_batch` call. Cached
-    for 1h on ``(date, sorted trail-id tuple)`` so sidebar filter changes
-    inside the TTL window hit the cache and the page renders instantly.
+    This is the fast path used by pages that need verdicts for lots of
+    trails at once (the Map overview, for example). Doing it in one batch
+    instead of one trail at a time is much quicker because:
 
-    ``precip_7day_rolling`` is approximated as today's precipitation —
-    matching the same approximation :func:`_features_from_snapshot` uses
-    for single-day forecasts, so batched results equal the per-row path
-    exactly. If the model isn't trained yet, every row falls through to
-    :func:`predict_for_snapshot`'s rule-based engine.
+      - one JOIN query gets all the weather snapshots
+      - one query gets all the trail metadata
+      - we load the trained model only once
+      - we call predict_batch once on the whole dataframe
 
-    Each value: ``{"verdict", "confidence", "snapshot", "trail"}``. Trails
-    without a cached snapshot get verdict ``"—"`` and ``snapshot=None`` —
-    callers preserve the grey-marker fallback.
+    Results are cached for an hour, keyed by date and the sorted tuple
+    of trail IDs. Any filter change inside that hour hits the cache and
+    the page renders instantly.
+
+    Returns a dictionary mapping trail_id to a dict with keys
+    "verdict", "confidence", "snapshot" and "trail". Trails with no
+    cached weather get the placeholder verdict and a snapshot of None.
+    Callers use that to render the grey "no data" markers.
     """
     snapshot_date = date.fromisoformat(snapshot_date_iso)
-    # One DB roundtrip for all snapshots and one for all trail metadata; the
-    # rest of the function works in-memory.
+    # Two database queries up front: one for all the day's snapshots, one
+    # for the trail metadata. Everything below works in memory after that.
     snapshots = db_manager.get_all_snapshots_for_date(snapshot_date)
     trail_meta = {t["id"]: dict(t) for t in db_manager.get_all_trails()}
 
@@ -276,8 +307,9 @@ def get_verdicts_for_date(
         feature_rows.append(feats)
         feature_tids.append(tid)
 
-    # Fast path: feed every trail into a single vectorised predict_batch call
-    # so we pay the model-load cost once per page render rather than per trail.
+    # Fast path: send every trail through predict_batch in one go. The
+    # model only gets loaded once, which is the slow part. Looping
+    # trail-by-trail would reload it every time.
     if feature_rows and trail_classifier.model_exists():
         try:
             df = pd.DataFrame(feature_rows)
