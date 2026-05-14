@@ -12,6 +12,8 @@ Owner: TM1 (layout) and TM4 (ML metrics).
 
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -136,6 +138,10 @@ def render_setup_section() -> None:
                     (i + 1) / len(trails),
                     text=f"Fetching archive… {t['name']} ({i+1}/{len(trails)})",
                 )
+                # Open-Meteo's free archive endpoint caps at ~600 requests
+                # per minute. Pacing each call by ~0.15s keeps us safely
+                # under that ceiling while still finishing in well under a minute.
+                time.sleep(0.15)
             progress.empty()
             if errors:
                 st.warning(
