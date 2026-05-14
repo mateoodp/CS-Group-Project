@@ -1,7 +1,13 @@
-"""About page — ML metrics, feature importance, contribution matrix.
+"""About page: problem statement, model setup, and performance metrics.
 
-Owner: TM1 (layout + contribution matrix) · TM4 (ML metrics)
+Owner: TM1 (layout) and TM4 (ML metrics).
 """
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
 
 from __future__ import annotations
 
@@ -14,13 +20,14 @@ from data import db_manager, weather_fetcher
 from ml import trail_classifier
 from utils.constants import (
     APP_TITLE,
-    CONTRIBUTION_MATRIX,
     FEATURE_DISPLAY_NAMES,
 )
 from utils.sidebar import render_shared_sidebar
 from utils.theme import apply_app_theme, page_hero, section_heading, stat_pills_html
 from utils.topnav import render_top_nav
 
+# Streamlit pattern - https://docs.streamlit.io
+# Page metadata. Must be the first Streamlit call on the page.
 st.set_page_config(
     page_title=f"About · {APP_TITLE}",
     page_icon="ℹ️",
@@ -34,57 +41,37 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 
 
+# Static intro section explaining the project's motivation and core claim.
 def render_problem_statement() -> None:
     st.markdown(
         section_heading(
             "Why this tool exists",
-            "Raw mountain weather is useful, but hikers need a route-level go/no-go signal they can scan quickly.",
+            "Raw weather numbers are useful, but hikers also need a quick answer about whether a given trail is a good idea today.",
             "Problem",
         ),
         unsafe_allow_html=True,
     )
     st.markdown(
         """
-        Swiss alpine accidents kill **~20 hikers per year** and injure hundreds
-        more — largely due to underestimated conditions. Existing apps
-        (MeteoSwiss, SRF Meteo) display raw data. The Swiss Alpine Club (SAC)
-        publishes avalanche bulletins, not trail-level go/no-go scores.
+        Hiking in the Swiss Alps is one of the best things you can do in
+        summer, but it can also be dangerous. Around **20 people die every
+        year** on Swiss alpine trails, and many more get injured. Most of
+        these accidents happen because hikers did not realise how risky
+        the conditions on a specific trail would actually be on that day.
 
-        This tool closes the gap: it takes seven meteorological variables,
-        passes them through a trained Random Forest classifier, and outputs
-        a single **SAFE / BORDERLINE / AVOID** verdict with confidence and
-        the top 3 contributing factors.
-        """
-    )
+        The weather apps people normally use (like MeteoSwiss or SRF Meteo)
+        show numbers such as temperature, wind speed, or chance of rain.
+        That information is useful, but it does not directly answer the
+        question every hiker is really asking: "is this trail a good idea
+        today?" The Swiss Alpine Club publishes avalanche warnings, but
+        again not at the level of an individual hike.
 
-
-# ---------------------------------------------------------------------------
-# Pipeline
-# ---------------------------------------------------------------------------
-
-
-def render_ml_pipeline() -> None:
-    st.markdown(
-        section_heading(
-            "How the ML pipeline works",
-            "Forecast data, route altitude and transparent rule labels feed the Random Forest model.",
-            "Pipeline",
-        ),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        """
-        | Step | What happens | Module |
-        |---|---|---|
-        | 1 | Pull `weather_snapshots` from SQLite, JOIN trail max altitude | `data/db_manager.py` |
-        | 2 | Engineer 7 features (wind chill, snowline delta, 7-day rolling rain…) | `ml/trail_classifier.py` |
-        | 3 | Bootstrap labels via SAC-style rules; user reports override | `data/label_engine.py` |
-        | 4 | Stratified 80/20 split | `train_test_split` |
-        | 5 | Fit `RandomForestClassifier(n_estimators=100, max_depth=8)` | scikit-learn |
-        | 6 | Evaluate: accuracy · confusion matrix · classification report | `sklearn.metrics` |
-        | 7 | Pickle to `ml/model.pkl` | `pickle` |
-        | 8 | Predict: `predict_proba` → verdict + confidence | `ml/trail_classifier.py` |
-        | 9 | Surface top-3 feature importances in every prediction | About tab |
+        Our app tries to close that gap. You pick a trail and a date, and
+        you get one clear answer: **SAFE**, **BORDERLINE**, or **AVOID**.
+        The answer comes with a short explanation of the main reasons
+        (for example "wind is too strong" or "the trail is above the snow
+        line that day"), so you can decide for yourself whether to go,
+        change your plans, or wait for better weather.
         """
     )
 
@@ -94,6 +81,8 @@ def render_ml_pipeline() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Admin section: seed the weather archive for all trails and retrain the model.
+# Kept on the About page so graders can reproduce results without using a CLI.
 def render_setup_section() -> None:
     st.markdown(
         section_heading(
@@ -116,15 +105,18 @@ def render_setup_section() -> None:
         unsafe_allow_html=True,
     )
 
+    # Two action buttons: seed historical weather (left) and retrain model (right).
     seed_col, train_col = st.columns(2)
     with seed_col:
         years = st.slider("Years of history to fetch", 1, 2, 1, key="seed_years")
         if st.button("⬇️ Seed historical weather (all trails)", width="stretch"):
+            # Walk every trail, hit the Open-Meteo archive, and persist into the local DB.
             trails = db_manager.get_all_trails()
             progress = st.progress(0.0, text="Fetching archive…")
             errors: list[str] = []
             for i, t in enumerate(trails):
                 try:
+                    # Open-Meteo Historical Archive - https://open-meteo.com/en/docs/historical-weather-api
                     weather_fetcher.seed_historical_weather(
                         t["id"], t["lat"], t["lon"], years=years
                     )
@@ -145,8 +137,11 @@ def render_setup_section() -> None:
     with train_col:
         if st.button("🧠 Retrain model", type="primary", width="stretch"):
             try:
+                # Adapted from scikit-learn docs - https://scikit-learn.org/stable/
+                # Retrain triggers a fresh RandomForest fit on the current DB content.
                 with st.spinner("Training Random Forest…"):
                     metrics = trail_classifier.retrain_from_db()
+                # Stash the metrics in session state so render_metrics can display them.
                 st.session_state["last_metrics"] = metrics
                 st.success(
                     f"Trained! Accuracy: {metrics['accuracy']:.1%} "
@@ -161,6 +156,8 @@ def render_setup_section() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Renders the model performance section: accuracy pills, confusion matrix,
+# classification report and feature importance bar chart.
 def render_metrics() -> None:
     st.markdown(
         section_heading(
@@ -190,6 +187,8 @@ def render_metrics() -> None:
         unsafe_allow_html=True,
     )
 
+    # Adapted from Plotly Python docs - https://plotly.com/python/
+    # Confusion matrix heatmap: rows = actual labels, columns = predicted labels.
     cm = metrics["confusion_matrix"]
     labels = list(trail_classifier.LABEL_TO_CODE.keys())
     fig = go.Figure(
@@ -214,10 +213,14 @@ def render_metrics() -> None:
     )
     st.plotly_chart(fig, width="stretch")
 
+    # Adapted from scikit-learn docs - https://scikit-learn.org/stable/
+    # Standard per-class precision/recall/F1 from sklearn.metrics.classification_report.
     st.subheader("Classification report")
     rep = pd.DataFrame(metrics["classification_report"]).T
     st.dataframe(rep.round(3), width="stretch")
 
+    # Adapted from Plotly Python docs - https://plotly.com/python/
+    # Horizontal bar chart of RandomForest feature importances, sorted ascending.
     st.subheader("Feature importance")
     imp_df = pd.DataFrame(
         metrics["feature_importances"], columns=["Feature", "Importance"]
@@ -237,35 +240,11 @@ def render_metrics() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Contribution matrix
-# ---------------------------------------------------------------------------
-
-
-def render_contribution_matrix() -> None:
-    st.markdown(
-        section_heading(
-            "Contribution matrix",
-            "A compact view of project ownership across the implemented system.",
-            "Team",
-        ),
-        unsafe_allow_html=True,
-    )
-    df = pd.DataFrame(CONTRIBUTION_MATRIX)
-    palette = {"L": "#1E7B3A", "M": "#52A370", "S": "#A8D5B7", "—": "#FFFFFF"}
-
-    def colour(val: str) -> str:
-        return f"background-color:{palette.get(val, '#FFFFFF')}; color:black;"
-
-    styled = df.style.map(colour, subset=["TM1", "TM2", "TM3", "TM4", "TM5"])
-    st.dataframe(styled, width="stretch", hide_index=True)
-    st.caption("Legend: **L** = Lead · **M** = Major · **S** = Support · — = None.")
-
-
-# ---------------------------------------------------------------------------
 # Attribution
 # ---------------------------------------------------------------------------
 
 
+# Static attribution section listing the third-party data sources we use.
 def render_attribution() -> None:
     st.markdown(
         section_heading(
@@ -277,9 +256,9 @@ def render_attribution() -> None:
     )
     st.markdown(
         """
-        - **Open-Meteo Forecast** · `api.open-meteo.com/v1/forecast` — free, no key.
-        - **Open-Meteo Historical Archive** · `archive-api.open-meteo.com/v1/archive` — free, no key.
-        - **Swisstopo GeoAdmin** · `api3.geo.admin.ch` — free federal geodata, no key.
+        - **[Open-Meteo Forecast](https://open-meteo.com/en/docs)**: current and 7-day forecast, free, no key.
+        - **[Open-Meteo Historical Archive](https://open-meteo.com/en/docs/historical-weather-api)**: up to two years of past weather, free, no key.
+        - **[Swisstopo GeoAdmin](https://docs.geo.admin.ch/access-data/identify-features.html)**: Swiss federal geodata for trail elevation lookups, free, no key.
         """
     )
 
@@ -289,6 +268,7 @@ def render_attribution() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Page entry point. Stacks the About sections separated by st.divider lines.
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
@@ -303,13 +283,9 @@ def main() -> None:
     )
     render_problem_statement()
     st.divider()
-    render_ml_pipeline()
-    st.divider()
     render_setup_section()
     st.divider()
     render_metrics()
-    st.divider()
-    render_contribution_matrix()
     st.divider()
     render_attribution()
 

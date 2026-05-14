@@ -19,6 +19,13 @@ robust to missing values, native probability output, interpretable, and
 beginner-friendly to defend in the Q&A.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 import json
@@ -42,7 +49,9 @@ MODEL_PATH: Path = Path(__file__).resolve().parent / "model.pkl"
 METRICS_PATH: Path = Path(__file__).resolve().parent / "last_metrics.json"
 MODEL_VERSION: str = "0.1.0-dev"
 
-# Feature order MUST be stable — changing it invalidates the saved model.
+# Feature order MUST be stable - changing it invalidates the saved model.
+# Each feature: raw inputs (temperature, wind, precipitation, cloud), plus
+# three engineered ones (snowline delta, wind-chill, 7-day rolling precip).
 FEATURE_COLUMNS: list[str] = [
     "temperature_c",
     "wind_speed_kmh",
@@ -53,6 +62,8 @@ FEATURE_COLUMNS: list[str] = [
     "precip_7day_rolling",
 ]
 
+# Manual label encoding (kept explicit rather than using sklearn's LabelEncoder
+# because the mapping must remain stable across retrains).
 LABEL_TO_CODE: dict[str, int] = {"SAFE": 0, "BORDERLINE": 1, "AVOID": 2}
 CODE_TO_LABEL: dict[int, str] = {v: k for k, v in LABEL_TO_CODE.items()}
 
@@ -68,8 +79,11 @@ def wind_chill(temp_c: float, wind_kmh: float) -> float:
     """
     if temp_c is None or wind_kmh is None:
         return temp_c
+    # Outside the formula's valid domain, returning the raw temperature is the
+    # documented NWS guidance (and avoids producing misleadingly cold numbers).
     if temp_c > 10.0 or wind_kmh < 4.8:
         return temp_c
+    # Standard NWS coefficients; v is wind speed raised to the 0.16 power.
     v = wind_kmh ** 0.16
     return 13.12 + 0.6215 * temp_c - 11.37 * v + 0.3965 * temp_c * v
 
@@ -84,16 +98,23 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     Returns a copy with all ``FEATURE_COLUMNS`` populated.
     """
     out = df.copy()
+    # Sort by (trail, date) so the rolling-window calculation below is monotone.
     out = out.sort_values(["trail_id", "snapshot_date"]).reset_index(drop=True)
 
+    # Rename the raw columns into the canonical feature names used by the model.
     out["temperature_c"] = out["temp_c"]
     out["wind_speed_kmh"] = out["wind_kmh"]
     out["precipitation_mm"] = out["precip_mm"]
     out["cloud_cover_pct"] = out["cloud_pct"]
+    # Snowline delta: positive means snowline is above the summit (safer).
     out["snowline_minus_trailmax"] = out["snowline_m"] - out["trail_max_alt_m"]
+    # Wind-chill captures the cold + wind interaction the rules cannot model alone.
     out["wind_chill_index"] = [
         wind_chill(t, w) for t, w in zip(out["temp_c"], out["wind_kmh"])
     ]
+    # pandas docs - https://pandas.pydata.org/docs/
+    # Per-trail 7-day rolling sum of precipitation proxies for ground saturation.
+    # min_periods=1 keeps early days from becoming NaN.
     out["precip_7day_rolling"] = (
         out.groupby("trail_id")["precip_mm"]
         .rolling(window=7, min_periods=1)
@@ -112,31 +133,43 @@ def train_model(df: pd.DataFrame, label_col: str = "label") -> dict:
 
     ``df`` must contain ``FEATURE_COLUMNS`` and ``label_col``.
     """
+    # NaN imputation: tree models are not NaN-tolerant in sklearn by default,
+    # so we replace missing measurements with 0.0 before fitting.
     feats = df[FEATURE_COLUMNS].fillna(0.0)
     labels = df[label_col].map(LABEL_TO_CODE)
 
+    # The model needs at least two classes to learn anything.
     if labels.nunique() < 2:
         raise ValueError(
             "Cannot train: training data only contains one class. "
             "Seed more historical weather first."
         )
 
+    # Adapted from scikit-learn docs - https://scikit-learn.org/stable/
+    # Stratify only when every class has >= 2 samples, otherwise sklearn errors.
     stratify = labels if labels.value_counts().min() >= 2 else None
     X_train, X_test, y_train, y_test = train_test_split(
         feats, labels, test_size=0.2, random_state=42, stratify=stratify
     )
 
+    # Adapted from scikit-learn docs - https://scikit-learn.org/stable/
+    # 100 trees with depth 8 is a good accuracy/interpretability trade-off for
+    # this dataset size; n_jobs=-1 parallelises across all available cores.
     model = RandomForestClassifier(
         n_estimators=100, max_depth=8, random_state=42, n_jobs=-1
     )
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
 
+    # Rank features by Gini importance so the About page can show what matters.
     importances = sorted(
         zip(FEATURE_COLUMNS, model.feature_importances_),
         key=lambda kv: kv[1],
         reverse=True,
     )
+    # Adapted from scikit-learn docs - https://scikit-learn.org/stable/
+    # Evaluation bundle: overall accuracy, full confusion matrix, and the
+    # per-class precision/recall/F1 report. All serialised to JSON later.
     metrics = {
         "accuracy": accuracy_score(y_test, y_pred),
         "confusion_matrix": confusion_matrix(
@@ -160,6 +193,8 @@ def train_model(df: pd.DataFrame, label_col: str = "label") -> dict:
         },
     }
 
+    # scikit-learn model persistence pattern - https://scikit-learn.org/stable/model_persistence.html
+    # Save the fitted estimator so the app can predict without retraining on every load.
     with MODEL_PATH.open("wb") as f:
         pickle.dump(model, f)
 
@@ -173,6 +208,7 @@ def load_model() -> RandomForestClassifier:
             f"No trained model at {MODEL_PATH}. "
             "Click 'Retrain model' on the About page first."
         )
+    # scikit-learn model persistence pattern - https://scikit-learn.org/stable/model_persistence.html
     with MODEL_PATH.open("rb") as f:
         return pickle.load(f)
 
@@ -194,13 +230,19 @@ def predict(features_row: pd.Series | dict) -> tuple[str, float, list[tuple[str,
     if isinstance(features_row, dict):
         features_row = pd.Series(features_row)
 
+    # Build a single-row DataFrame in the exact FEATURE_COLUMNS order; missing
+    # keys default to 0.0 so the call cannot crash on partial inputs.
     X = pd.DataFrame([[features_row.get(c, 0.0) for c in FEATURE_COLUMNS]],
                      columns=FEATURE_COLUMNS).fillna(0.0)
+    # predict_proba returns class probabilities; we report the argmax as verdict
+    # and its probability as the confidence score shown in the UI.
     proba = model.predict_proba(X)[0]
     code = int(np.argmax(proba))
     verdict = CODE_TO_LABEL[code]
     confidence = float(proba[code])
 
+    # Top-3 features by global importance, attached to every prediction so the
+    # UI can display "why" alongside the verdict.
     importances = sorted(
         zip(FEATURE_COLUMNS, model.feature_importances_),
         key=lambda kv: kv[1],
@@ -213,9 +255,11 @@ def predict_batch(df: pd.DataFrame) -> pd.DataFrame:
     """Vectorised prediction over many rows. Returns df + verdict + confidence."""
     model = load_model()
     X = df[FEATURE_COLUMNS].fillna(0.0)
+    # One predict_proba call for all rows is far cheaper than looping per-row.
     proba = model.predict_proba(X)
     codes = np.argmax(proba, axis=1)
 
+    # Attach the verdict label and its associated probability back onto the frame.
     out = df.copy()
     out["verdict"] = [CODE_TO_LABEL[c] for c in codes]
     out["confidence"] = proba[np.arange(len(codes)), codes]
@@ -228,6 +272,7 @@ def predict_batch(df: pd.DataFrame) -> pd.DataFrame:
 
 def _load_training_frame() -> pd.DataFrame:
     """Pull weather_snapshots + trail max_alt → labelled DataFrame."""
+    # Pull every cached snapshot joined with the trail's max altitude.
     rows = db_manager.get_all_weather()
     if not rows:
         raise RuntimeError(
@@ -241,9 +286,12 @@ def _load_training_frame() -> pd.DataFrame:
     if df.empty:
         raise RuntimeError("No usable weather rows (all are missing key fields).")
 
+    # Step 1: bootstrap labels via the rule engine over the entire frame.
     df["label"] = label_engine.label_dataframe(df)
 
-    # Override bootstrap labels with any user_reports for the same (trail, date).
+    # Step 2: override bootstrap labels with any user_reports for the same (trail, date).
+    # pandas docs - https://pandas.pydata.org/docs/
+    # Left-merge keeps every weather row, then fillna lets user labels win where they exist.
     user_rows = db_manager.get_all_user_reports()
     if user_rows:
         ur = pd.DataFrame([dict(r) for r in user_rows])
@@ -266,11 +314,14 @@ def _persist_metrics(metrics: dict) -> None:
     ``classification_report`` from sklearn nests both per-class dicts and
     a top-level ``accuracy`` scalar — both branches are handled here.
     """
+    # First pass: convert any numpy arrays/scalars to plain Python (tolist).
     safe: dict = {
         k: (v.tolist() if hasattr(v, "tolist") else v)
         for k, v in metrics.items()
         if k != "classification_report"
     }
+    # Second pass: classification_report has both per-class dicts and a scalar
+    # "accuracy" key, so we handle both shapes explicitly.
     safe["classification_report"] = {
         cls: ({m: float(v) for m, v in vals.items()}
               if isinstance(vals, dict) else float(vals))
@@ -281,6 +332,7 @@ def _persist_metrics(metrics: dict) -> None:
 
 def retrain_from_db() -> dict:
     """Full retrain using the current ``weather_snapshots`` + ``user_reports``."""
+    # End-to-end pipeline: load + label, engineer features, fit, persist metrics.
     df = _load_training_frame()
     df = engineer_features(df)
     metrics = train_model(df, label_col="label")
@@ -289,7 +341,7 @@ def retrain_from_db() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# CLI helper — python -m ml.trail_classifier
+# CLI helper - python -m ml.trail_classifier
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":

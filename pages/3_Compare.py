@@ -10,6 +10,12 @@ Single, self-contained workflow:
 When the user lands here from a Trail Detail "Compare with…" button,
 their preselected trail is added to the multiselect automatically.
 """
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
 
 from __future__ import annotations
 
@@ -26,6 +32,8 @@ from utils.sidebar import render_shared_sidebar
 from utils.theme import apply_app_theme, page_hero, section_heading, stat_pills_html
 from utils.topnav import render_top_nav
 
+# Streamlit pattern - https://docs.streamlit.io
+# Page metadata. Must be the first Streamlit call on the page.
 st.set_page_config(
     page_title=f"Compare · {APP_TITLE}",
     page_icon="🔀",
@@ -33,11 +41,14 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Compare needs at least 2 trails for a meaningful chart, capped at 4 to keep visuals readable.
 MIN_TRAILS: int = 2
 MAX_TRAILS: int = 4
 FORECAST_HORIZON_DAYS: int = 6
 
+# Map textual verdicts to numeric scores so we can plot them on a 1-3 bar scale.
 VERDICT_SCORE = {"SAFE": 1, "BORDERLINE": 2, "AVOID": 3}
+# Each radar axis: (snapshot key, display label, normalisation lo, normalisation hi).
 RADAR_FIELDS = [
     ("temp_c", "Temp", -10, 30),
     ("wind_kmh", "Wind", 0, 80),
@@ -52,8 +63,9 @@ def _snapshot_for(trail, target_date):
     snap = db_manager.get_weather_for_date(trail["id"], target_date)
     if snap is not None:
         return dict(snap)
-    # Specific date missing — force a refresh even if cache is "fresh".
+    # Specific date missing - force a refresh even if cache is "fresh".
     try:
+        # Open-Meteo Forecast API - https://open-meteo.com/en/docs
         weather_fetcher.refresh_cache(
             trail["id"], trail["lat"], trail["lon"], force=True
         )
@@ -67,6 +79,7 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
     """Render the date picker + trail multiselect. Returns (date, [trail_id])."""
     today = date.today()
 
+    # Streamlit pattern - https://docs.streamlit.io
     # Pre-seed the multiselect from session state (e.g. when arriving via
     # a "Compare with…" button from the Trail Detail page).
     st.markdown(
@@ -78,20 +91,25 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
         unsafe_allow_html=True,
     )
 
+    # Build {display label -> trail id} for the multiselect, and the reverse map for seeding.
     options = {
         f"{t['name']}  ·  {t['canton']}  ·  {t['difficulty']}": t["id"]
         for t in all_trails
     }
     label_for_id = {tid: lbl for lbl, tid in options.items()}
 
+    # If we arrived from Trail Detail's "Compare with…" button, preselect that trail.
     preselected_label = None
     seed_id = st.session_state.pop("compare_seed_trail_id", None)
     if seed_id and seed_id in label_for_id:
         preselected_label = label_for_id[seed_id]
 
+    # Streamlit pattern - https://docs.streamlit.io
+    # Two-column input: date picker (narrow) and trail multiselect (wide).
     c1, c2 = st.columns([1, 3])
     with c1:
         max_date = today + timedelta(days=FORECAST_HORIZON_DAYS)
+        # Restore the previously chosen date from session state if it's still in range.
         _stored = st.session_state.get("compare_date")
         if isinstance(_stored, str):
             from datetime import datetime as _dt
@@ -119,6 +137,8 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
     return chosen_date, [options[c] for c in chosen]
 
 
+# Adapted from Plotly Python docs - https://plotly.com/python/
+# Render a bar chart of risk scores (1=SAFE up to 3=AVOID) with one bar per trail.
 def render_bar_chart(rows: list[dict]) -> None:
     st.markdown(
         section_heading(
@@ -159,6 +179,8 @@ def render_bar_chart(rows: list[dict]) -> None:
     st.plotly_chart(fig, width="stretch")
 
 
+# Adapted from Plotly Python docs - https://plotly.com/python/
+# Render a polar/radar chart that overlays each trail's normalised weather profile.
 def render_radar_chart(rows: list[dict]) -> None:
     st.markdown(
         section_heading(
@@ -174,6 +196,7 @@ def render_radar_chart(rows: list[dict]) -> None:
     categories = [label for _, label, *_ in RADAR_FIELDS]
     for r in rows:
         snap = r["snapshot"] or {}
+        # Normalise each metric to a 0-100 scale using the (lo, hi) bounds in RADAR_FIELDS.
         normed = []
         for key, _, lo, hi in RADAR_FIELDS:
             val = snap.get(key)
@@ -181,6 +204,7 @@ def render_radar_chart(rows: list[dict]) -> None:
                 normed.append(0)
             else:
                 normed.append(max(0, min(1, (val - lo) / (hi - lo))) * 100)
+        # Close the polygon by repeating the first point at the end.
         fig.add_trace(
             go.Scatterpolar(
                 r=normed + [normed[0]],
@@ -199,6 +223,7 @@ def render_radar_chart(rows: list[dict]) -> None:
     st.plotly_chart(fig, width="stretch")
 
 
+# Side-by-side comparison table and per-trail "open detail page" buttons.
 def render_summary_table(rows: list[dict], target_date) -> None:
     st.markdown(
         section_heading(
@@ -210,6 +235,7 @@ def render_summary_table(rows: list[dict], target_date) -> None:
     )
     if not rows:
         return
+    # Build a tidy list-of-dicts that pandas turns straight into a table.
     table = []
     for r in rows:
         snap = r["snapshot"] or {}
@@ -251,6 +277,7 @@ def render_summary_table(rows: list[dict], target_date) -> None:
         ),
         unsafe_allow_html=True,
     )
+    # One "open detail" button per trail. Clicking sets session state and navigates.
     cols = st.columns(len(rows))
     for col, r in zip(cols, rows):
         if col.button(
@@ -258,11 +285,14 @@ def render_summary_table(rows: list[dict], target_date) -> None:
             key=f"compare_open_{r['trail_id']}",
             width="stretch",
         ):
+            # Streamlit pattern - https://docs.streamlit.io
+            # Pass context to Trail Detail via session state, then hard-navigate.
             st.session_state["selected_trail_id"] = r["trail_id"]
             st.session_state["selected_date"] = target_date
             st.switch_page("pages/Trail_Detail.py")
 
 
+# Page entry point. Composes the layout: hero, inputs, summary pills, charts, table.
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
@@ -280,6 +310,7 @@ def main() -> None:
     all_trails = db_manager.get_all_trails()
     target_date, trail_ids = render_inputs(all_trails)
 
+    # Enforce the 2-4 trail selection rule; bail out early with a helpful hint.
     if not (MIN_TRAILS <= len(trail_ids) <= MAX_TRAILS):
         st.info(
             f"Select between **{MIN_TRAILS}** and **{MAX_TRAILS}** trails to "
@@ -287,9 +318,11 @@ def main() -> None:
         )
         return
 
+    # Risk tolerance (1-5) lives in the shared sidebar; default 3 if not yet set.
     risk = st.session_state.get("risk_tolerance", 3)
     rows = []
     aggregated_caveats: list[tuple[str, str]] = []
+    # For each selected trail: fetch snapshot, predict verdict, gather safety caveats.
     for tid in trail_ids:
         trail = db_manager.get_trail(tid)
         snap = _snapshot_for(trail, target_date)
@@ -316,6 +349,7 @@ def main() -> None:
             }
         )
 
+    # Tally verdicts for the summary "stat pills" row above the charts.
     verdict_counts = {}
     for row in rows:
         verdict_counts[row["verdict"]] = verdict_counts.get(row["verdict"], 0) + 1

@@ -1,5 +1,12 @@
 """Route-specific image helpers for discovery cards."""
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 import re
@@ -11,6 +18,8 @@ import streamlit as st
 from utils.trail_detail import fetch_trail_images
 
 
+# Wikimedia Commons thumbnail endpoint - https://commons.wikimedia.org/w/api.php
+# Serves resized JPEG/PNG thumbs for any file in Commons, addressed by filename.
 COMMONS_THUMB_ENDPOINT: str = "https://commons.wikimedia.org/w/thumb.php"
 UNSPLASH_FALLBACK_IMAGE: str = (
     "https://images.unsplash.com/photo-1506905925346-21bda4d32df4"
@@ -18,6 +27,8 @@ UNSPLASH_FALLBACK_IMAGE: str = (
 )
 FALLBACK_NOTICE: str = "Illustrative Unsplash image - not the actual route"
 
+# Stop-words for trail name tokenisation. Generic hiking terms make poor
+# search queries (they match thousands of unrelated images on Commons).
 GENERIC_ROUTE_WORDS: set[str] = {
     "approach",
     "canton",
@@ -34,6 +45,9 @@ GENERIC_ROUTE_WORDS: set[str] = {
     "walk",
 }
 
+# Curated mapping of trail-name keywords to Wikimedia Commons filenames.
+# Used as the first lookup before falling back to the live search API,
+# guaranteeing high-quality images for the most popular routes.
 KNOWN_ROUTE_IMAGE_FILES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("gornergrat",), "Aerial panorama of the Gornergrat 170622.jpg"),
     (("aletsch",), "Fieschertal VS - Aletsch Glacier (28235283066).jpg"),
@@ -60,11 +74,14 @@ def _row_value(row, key: str, default=None):
         return default
 
 
+# Build a Commons thumbnail URL for a given filename and pixel width.
 def _commons_thumb_url(filename: str, width: int = 900) -> str:
     normalized = filename.replace(" ", "_")
     return f"{COMMONS_THUMB_ENDPOINT}?f={quote(normalized, safe='')}&w={width}"
 
 
+# Strip accents and non-alphanumerics so token matches work across
+# Maennlichen / Maennlichen / Mannlichen spellings consistently.
 def _searchable_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.casefold())
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
@@ -124,16 +141,21 @@ def route_image_search_terms(trail) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
+# Streamlit caching pattern - https://docs.streamlit.io
+# Cache route image lookups for 24h - Wikimedia images change very rarely.
 @st.cache_data(ttl=86400, show_spinner=False)
 def _route_image_info_cached(
     trail_name: str,
     canton: str,
     region: str,
 ) -> dict[str, str | bool]:
+    # Step 1: curated lookup - hand-picked images for well-known routes.
     known_url = _known_route_image_url(trail_name)
     if known_url:
         return {"url": known_url, "is_fallback": False, "notice": ""}
 
+    # Step 2: live Wikimedia Commons API search using progressively
+    # broader query terms; first matching image wins.
     trail = {"name": trail_name, "canton": canton, "region": region}
     for term in route_image_search_terms(trail):
         images = fetch_trail_images(term, limit=5)
@@ -145,6 +167,8 @@ def _route_image_info_cached(
                     "is_fallback": False,
                     "notice": "",
                 }
+    # Step 3: nothing matched - fall back to a generic Alpine Unsplash photo
+    # tagged with a notice so we never mislead users about route imagery.
     return _fallback_image_info()
 
 
@@ -183,6 +207,8 @@ def trail_id_from_query_params(query_params) -> int | None:
         raw = query_params.get("trail_id")
     except AttributeError:
         return None
+    # Older Streamlit returned lists for every param; newer versions return a
+    # plain string. Handle both shapes defensively.
     if isinstance(raw, (list, tuple)):
         raw = raw[0] if raw else None
     try:

@@ -13,6 +13,13 @@ background by :mod:`utils.data_health`. The user never has to click a
 "refresh" button.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 import streamlit as st
@@ -29,6 +36,9 @@ def render_shared_sidebar() -> None:
     """Render the simplified sidebar. Safe to call from every page."""
     st.sidebar.header("⚙️ Settings")
 
+    # Risk tolerance slider: a single global setting that the verdict-adjustment
+    # logic in utils.predictions uses to nudge displayed verdicts toward SAFE
+    # (bold users) or AVOID (cautious users).
     risk = st.sidebar.slider(
         "Risk tolerance",
         min_value=RISK_SLIDER_MIN,
@@ -41,9 +51,13 @@ def render_shared_sidebar() -> None:
         ),
         key="risk_slider",
     )
+    # Streamlit session state pattern - https://docs.streamlit.io/library/api-reference/session-state
+    # Persist the slider value so other pages can read it without re-rendering.
     st.session_state["risk_tolerance"] = risk
 
     st.sidebar.divider()
+    # Show the currently-selected trail (set by Find/Map pages) so the user
+    # has feedback regardless of which page they are on.
     selected_id = st.session_state.get("selected_trail_id")
     if selected_id is None:
         st.sidebar.caption(

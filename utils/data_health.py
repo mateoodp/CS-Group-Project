@@ -15,6 +15,13 @@ Tuning notes:
   per Streamlit session for the same trail set.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,6 +37,8 @@ MAX_RETRIES: int = 1
 
 def _fetch_one(trail) -> bool:
     """Refresh one trail's cache. Retry once on failure."""
+    # Retry loop: first attempt uses normal caching; the retry passes
+    # force=True to bypass any stale partial cache that triggered the failure.
     for attempt in range(MAX_RETRIES + 1):
         try:
             weather_fetcher.refresh_cache(
@@ -79,6 +88,8 @@ def ensure_weather_cached(
     if not missing:
         return 0, 0
 
+    # Streamlit session state pattern - https://docs.streamlit.io/library/api-reference/session-state
+    # Use a per-page, per-date memo key so each page fetches at most once per session.
     memo_key = f"_data_health_done__{page_key}__{target_date.isoformat()}"
     if st.session_state.get(memo_key):
         # Already attempted in this session; surface failures count only.
@@ -107,6 +118,8 @@ def ensure_weather_cached(
 def _do_fetch(trails) -> tuple[int, int]:
     """Run the parallel fetch. Returns (ok, failed)."""
     succeeded = failed = 0
+    # ThreadPoolExecutor pattern - https://docs.python.org/3/library/concurrent.futures.html
+    # Bounded concurrency keeps us well under Open-Meteo's rate limits.
     with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
         futures = [ex.submit(_fetch_one, t) for t in trails]
         for fut in as_completed(futures):

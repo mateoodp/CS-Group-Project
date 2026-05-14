@@ -15,6 +15,13 @@ Tables (see Section 3 of the product report for full schema):
     * ``predictions``      — logged ML outputs (audit trail).
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 import json
@@ -29,6 +36,9 @@ from typing import Iterator, Optional
 # ---------------------------------------------------------------------------
 
 import os
+# Resolve the DB location. On Streamlit Community Cloud the home directory is
+# /home/appuser and only /tmp is reliably writable, so we route there. Locally
+# we keep the DB next to the repo root for easy inspection.
 DB_PATH: Path = (Path("/tmp/hiking_app.db")
     if os.getenv("HOME") == "/home/appuser"
     else Path(__file__).resolve().parent.parent / "hiking_app.db")
@@ -46,11 +56,15 @@ def get_connection() -> Iterator[sqlite3.Connection]:
 
     Enables foreign keys and returns rows as ``sqlite3.Row`` (dict-like).
     """
+    # Python sqlite3 stdlib - https://docs.python.org/3/library/sqlite3.html
     conn = sqlite3.connect(DB_PATH)
+    # Row factory returns rows that can be accessed both by index and column name.
     conn.row_factory = sqlite3.Row
+    # SQLite disables FK enforcement by default; enable it per connection.
     conn.execute("PRAGMA foreign_keys = ON;")
     try:
         yield conn
+        # Commit on successful exit; the finally block always closes the handle.
         conn.commit()
     finally:
         conn.close()
@@ -62,6 +76,9 @@ def get_connection() -> Iterator[sqlite3.Connection]:
 
 SCHEMA_VERSION: int = 3  # bump whenever the schema OR seed catalogue changes
 
+# Python sqlite3 stdlib - https://docs.python.org/3/library/sqlite3.html
+# DDL for all four application tables plus a tiny meta table used to detect
+# stale schemas. CREATE TABLE IF NOT EXISTS keeps this script idempotent.
 SCHEMA_SQL: str = """
 CREATE TABLE IF NOT EXISTS schema_meta (
     version INTEGER NOT NULL
@@ -126,6 +143,8 @@ def setup_db() -> None:
     migration before any data we care about lives in the DB).
     """
     with get_connection() as conn:
+        # Drop stale tables first, then (re)create them, stamp the version,
+        # and finally seed the trails catalogue if the table is empty.
         _migrate_if_needed(conn)
         conn.executescript(SCHEMA_SQL)
         _stamp_version(conn)
@@ -134,6 +153,8 @@ def setup_db() -> None:
 
 def _migrate_if_needed(conn: sqlite3.Connection) -> None:
     """Drop all tables if the persisted schema version is stale or missing."""
+    # Read the recorded schema version. If the meta table itself does not exist
+    # yet (first-ever run), treat that as version 0 and trigger a fresh build.
     try:
         row = conn.execute("SELECT version FROM schema_meta;").fetchone()
         current = row["version"] if row else 0
@@ -143,6 +164,7 @@ def _migrate_if_needed(conn: sqlite3.Connection) -> None:
     if current == SCHEMA_VERSION:
         return
 
+    # Drop in reverse-dependency order so foreign-key constraints don't block.
     for tbl in ("predictions", "user_reports", "weather_snapshots",
                 "trails", "schema_meta"):
         conn.execute(f"DROP TABLE IF EXISTS {tbl};")
@@ -150,12 +172,15 @@ def _migrate_if_needed(conn: sqlite3.Connection) -> None:
 
 def _stamp_version(conn: sqlite3.Connection) -> None:
     """Persist the current schema version. Idempotent."""
+    # Replace any prior version row with the current one so the table always
+    # contains exactly one entry reflecting SCHEMA_VERSION.
     conn.execute("DELETE FROM schema_meta;")
     conn.execute("INSERT INTO schema_meta (version) VALUES (?);", (SCHEMA_VERSION,))
 
 
 def _seed_trails_if_empty(conn: sqlite3.Connection) -> None:
     """Populate ``trails`` from ``trails_seed.json`` if the table is empty."""
+    # Guard so we don't double-seed across app restarts.
     count = conn.execute("SELECT COUNT(*) FROM trails;").fetchone()[0]
     if count > 0:
         return
@@ -166,6 +191,8 @@ def _seed_trails_if_empty(conn: sqlite3.Connection) -> None:
     with TRAILS_SEED_PATH.open(encoding="utf-8") as f:
         trails = json.load(f)
 
+    # Python sqlite3 stdlib - https://docs.python.org/3/library/sqlite3.html
+    # executemany inserts the 20 pre-defined Swiss routes in a single round-trip.
     conn.executemany(
         """
         INSERT INTO trails
@@ -177,12 +204,13 @@ def _seed_trails_if_empty(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Public API — trails
+# Public API - trails
 # ---------------------------------------------------------------------------
 
 def get_all_trails() -> list[sqlite3.Row]:
     """Return every trail, ordered alphabetically by name."""
     with get_connection() as conn:
+        # Case-insensitive sort so "Ä..." trails interleave naturally with "A...".
         return conn.execute(
             "SELECT * FROM trails ORDER BY name COLLATE NOCASE;"
         ).fetchall()
@@ -212,6 +240,8 @@ def get_filtered_trails(
     ``max_alt_m`` (the highest point of the trail) since that's what
     determines snowline exposure.
     """
+    # Build up a dynamic WHERE clause. Each filter contributes its own AND piece
+    # plus parameter values, so SQL injection is avoided via parameter binding.
     clauses: list[str] = []
     params: list = []
     if cantons:
@@ -236,6 +266,7 @@ def get_filtered_trails(
         clauses.append("max_alt_m <= ?")
         params.append(max_alt_m)
 
+    # Join the partial clauses; with no filters supplied this returns every trail.
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_connection() as conn:
         return conn.execute(
@@ -251,6 +282,8 @@ def get_trail_metadata() -> dict:
     canton lists.
     """
     with get_connection() as conn:
+        # One DISTINCT query per categorical filter, plus one MIN/MAX query for
+        # the numeric slider bounds. Cheap on 20 rows; clearer than one mega-query.
         cantons = [r[0] for r in conn.execute(
             "SELECT DISTINCT canton FROM trails ORDER BY canton;"
         ).fetchall()]
@@ -276,7 +309,7 @@ def get_trail_metadata() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Public API — weather snapshots
+# Public API - weather snapshots
 # ---------------------------------------------------------------------------
 
 def upsert_weather_snapshot(
@@ -290,6 +323,8 @@ def upsert_weather_snapshot(
 ) -> None:
     """Insert or update a weather snapshot for ``(trail_id, snapshot_date)``."""
     with get_connection() as conn:
+        # SQLite "UPSERT" - INSERT with ON CONFLICT updates the existing row
+        # when the (trail_id, snapshot_date) UNIQUE constraint is hit.
         conn.execute(
             """
             INSERT INTO weather_snapshots
@@ -320,6 +355,9 @@ def upsert_weather_snapshots_bulk(rows: list[dict]) -> None:
     if not rows:
         return
     with get_connection() as conn:
+        # Python sqlite3 stdlib - https://docs.python.org/3/library/sqlite3.html
+        # executemany with named parameters lets us upsert hundreds of rows in
+        # a single statement (used by the historical seed which loads ~730/trail).
         conn.executemany(
             """
             INSERT INTO weather_snapshots
@@ -341,6 +379,8 @@ def upsert_weather_snapshots_bulk(rows: list[dict]) -> None:
 def get_weather_history(trail_id: int, days: int = 730) -> list[sqlite3.Row]:
     """Return the last ``days`` of weather snapshots for a trail (oldest first)."""
     with get_connection() as conn:
+        # Pull newest rows first via LIMIT, then reverse in Python so callers
+        # receive a chronologically ascending list.
         return conn.execute(
             """
             SELECT * FROM weather_snapshots
@@ -354,9 +394,11 @@ def get_weather_history(trail_id: int, days: int = 730) -> list[sqlite3.Row]:
 
 def get_weather_history_range(trail_id: int, start_date, end_date) -> list[dict]:
     """Return weather snapshots between two dates (inclusive), oldest first."""
+    # Accept either date objects or already-formatted ISO strings.
     start_iso = start_date.isoformat() if hasattr(start_date, "isoformat") else start_date
     end_iso = end_date.isoformat() if hasattr(end_date, "isoformat") else end_date
     with get_connection() as conn:
+        # BETWEEN is inclusive on both ends, which matches the docstring.
         rows = conn.execute(
             """
             SELECT * FROM weather_snapshots
@@ -371,6 +413,9 @@ def get_weather_history_range(trail_id: int, start_date, end_date) -> list[dict]
 def get_all_weather() -> list[sqlite3.Row]:
     """Return every weather snapshot joined with its trail's max altitude."""
     with get_connection() as conn:
+        # JOIN brings trail max altitude alongside each snapshot so the ML
+        # training pipeline can compute the snowline-delta feature without a
+        # second query per trail.
         return conn.execute(
             """
             SELECT ws.*, t.max_alt_m AS trail_max_alt_m, t.name AS trail_name
@@ -406,6 +451,8 @@ def get_all_snapshots_for_date(snapshot_date) -> dict[int, dict]:
         else snapshot_date
     )
     with get_connection() as conn:
+        # Single JOIN over all trails for the given day; faster than calling
+        # get_weather_for_date in a loop when the discovery page needs verdicts.
         rows = conn.execute(
             """
             SELECT ws.*, t.max_alt_m
@@ -426,6 +473,8 @@ def get_latest_snapshot_age_hours(trail_id: int) -> Optional[float]:
     relative to *today* to drive cache invalidation).
     """
     with get_connection() as conn:
+        # MAX on the ISO date string works correctly because YYYY-MM-DD sorts
+        # lexicographically the same as chronologically.
         row = conn.execute(
             """
             SELECT MAX(snapshot_date) AS latest
@@ -437,12 +486,13 @@ def get_latest_snapshot_age_hours(trail_id: int) -> Optional[float]:
     if row is None or row["latest"] is None:
         return None
     latest = datetime.fromisoformat(row["latest"]).date()
+    # Convert day delta to hours; clamp negative deltas (future-dated rows) to 0.
     delta = (date.today() - latest).days
     return max(delta, 0) * 24.0
 
 
 # ---------------------------------------------------------------------------
-# Public API — user reports
+# Public API - user reports
 # ---------------------------------------------------------------------------
 
 def insert_user_report(
@@ -455,6 +505,8 @@ def insert_user_report(
 
     ``user_label`` must be one of ``"SAFE"``, ``"BORDERLINE"``, ``"AVOID"``.
     """
+    # Defensive check (the table also has a CHECK constraint, but this gives a
+    # nicer error before round-tripping to SQLite).
     if user_label not in {"SAFE", "BORDERLINE", "AVOID"}:
         raise ValueError(f"Invalid user_label: {user_label!r}")
     with get_connection() as conn:
@@ -475,6 +527,7 @@ def insert_user_report(
 def get_recent_user_reports(limit: int = 20) -> list[sqlite3.Row]:
     """Return the N most recent user reports for the live feed."""
     with get_connection() as conn:
+        # JOIN includes the trail name so the UI does not need a second lookup.
         return conn.execute(
             """
             SELECT ur.*, t.name AS trail_name
@@ -489,8 +542,10 @@ def get_recent_user_reports(limit: int = 20) -> list[sqlite3.Row]:
 
 def get_report_distribution(trail_id: int, days: int = 30) -> dict[str, int]:
     """Count user reports by label for a trail over the past ``days`` days."""
+    # Compute the lookback boundary client-side and pass it as an ISO string.
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     with get_connection() as conn:
+        # GROUP BY user_label yields one count per category for the trail card.
         rows = conn.execute(
             """
             SELECT user_label, COUNT(*) AS cnt
@@ -512,7 +567,7 @@ def get_all_user_reports() -> list[sqlite3.Row]:
 
 
 # ---------------------------------------------------------------------------
-# Public API — predictions (audit trail)
+# Public API - predictions (audit trail)
 # ---------------------------------------------------------------------------
 
 def log_prediction(
@@ -525,6 +580,8 @@ def log_prediction(
 ) -> None:
     """Append a row to ``predictions`` for auditing / monitoring."""
     with get_connection() as conn:
+        # Serialise the top feature list to JSON so we keep the schema flat
+        # while still preserving the ranked importances per prediction.
         conn.execute(
             """
             INSERT INTO predictions
@@ -544,7 +601,7 @@ def log_prediction(
 
 
 # ---------------------------------------------------------------------------
-# CLI helper — so teammates can run: python -m data.db_manager
+# CLI helper - so teammates can run: python -m data.db_manager
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":

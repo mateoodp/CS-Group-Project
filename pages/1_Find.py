@@ -10,6 +10,13 @@ altitude) and picks a date within the 7-day forecast horizon. The page:
     5. Renders the top results as cards. Click a card → Trail Detail.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 from html import escape
@@ -34,6 +41,7 @@ from utils.theme import (
 from utils.topnav import render_top_nav
 from utils.trail_detail import difficulty_dots_html, naismith_time
 
+# Streamlit pattern - https://docs.streamlit.io
 st.set_page_config(
     page_title=f"Find · {APP_TITLE}",
     page_icon="🧭",
@@ -41,6 +49,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Lower number sorts first, so SAFE trails bubble to the top of the result list.
 VERDICT_RANK = {"SAFE": 0, "BORDERLINE": 1, "AVOID": 2, "—": 3}
 TOP_N: int = 10
 FORECAST_HORIZON_DAYS: int = 6
@@ -62,6 +71,8 @@ def render_quiz(meta: dict) -> dict | None:
     # create fresh widget instances with default values on the next rerun.
     v = st.session_state.get("quiz_reset_counter", 0)
 
+    # Two-column layout: filters on the left, distance/altitude/date on the right.
+    # Streamlit pattern - https://docs.streamlit.io
     with st.container(border=True):
         c1, c2 = st.columns(2)
         with c1:
@@ -134,6 +145,7 @@ def render_quiz(meta: dict) -> dict | None:
     if not submitted:
         return None
 
+    # Empty multiselects collapse to None so the DB filter treats them as "any".
     return {
         "cantons": cantons or None,
         "regions": regions or None,
@@ -158,10 +170,13 @@ def _ensure_snapshot(trail, target_date: date) -> tuple[dict | None, str | None]
     surface the *last* error so the UI can show users why a trail is
     missing — never silently degrade to "no data".
     """
+    # Fast path: a fresh snapshot already lives in SQLite, return it.
     snap = db_manager.get_weather_for_date(trail["id"], target_date)
     if snap is not None:
         return dict(snap), None
 
+    # Otherwise hit the Open-Meteo API to refresh the cache, then retry once.
+    # Open-Meteo Forecast API - https://open-meteo.com/en/docs
     last_err: Exception | None = None
     for attempt in range(MAX_FETCH_RETRIES + 1):
         try:
@@ -189,6 +204,8 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
     """Score one trail. Always returns a complete row (even on failure)."""
     snap, err = _ensure_snapshot(trail, target_date)
 
+    # If we never got weather data, return a placeholder so the trail still
+    # appears in the list but is sorted to the bottom.
     if snap is None:
         return {
             "trail": trail,
@@ -202,6 +219,8 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
             "rank_key": (VERDICT_RANK["—"], 1.0, trail["name"].lower()),
         }
 
+    # Run the ML model (or rule fallback) on the snapshot, then apply
+    # difficulty/risk-tolerance adjustments to get the final verdict shown.
     verdict, conf, _, source = predictions.predict_for_snapshot(
         snap, trail["max_alt_m"]
     )
@@ -226,6 +245,7 @@ def _score_trail(trail, target_date: date, risk: int) -> dict:
 
 def _score_all_parallel(candidates, target_date: date, risk: int) -> list[dict]:
     """Score every candidate in parallel with a small thread pool + progress."""
+    # ThreadPoolExecutor is fine here because fetching/scoring is I/O bound.
     results: list[dict] = []
     progress = st.progress(
         0.0, text=f"Checking the forecast for {len(candidates)} trail(s)…"
@@ -244,6 +264,8 @@ def _score_all_parallel(candidates, target_date: date, risk: int) -> list[dict]:
     return results
 
 
+# Top-level results renderer: success banner, stat pills, error expander,
+# and a 3-column grid of cards (with a "show more" expander beyond TOP_N).
 def render_results(results: list[dict], target_date: date) -> None:
     if not results:
         st.warning(
@@ -251,6 +273,7 @@ def render_results(results: list[dict], target_date: date) -> None:
         )
         return
 
+    # Tally verdicts so we can print a quick green/orange/red summary.
     summary = {"SAFE": 0, "BORDERLINE": 0, "AVOID": 0, "—": 0}
     for r in results:
         summary[r["adjusted"]] = summary.get(r["adjusted"], 0) + 1
@@ -273,7 +296,7 @@ def render_results(results: list[dict], target_date: date) -> None:
         unsafe_allow_html=True,
     )
 
-    # Surface failed fetches loudly — never silently degrade to "no data".
+    # Surface failed fetches loudly - never silently degrade to "no data".
     failed = [r for r in results if r.get("error")]
     if failed:
         sample_errors = sorted({r["error"] for r in failed})[:3]
@@ -306,6 +329,8 @@ def render_results(results: list[dict], target_date: date) -> None:
     st.markdown(_CARD_CSS, unsafe_allow_html=True)
     top = results[:TOP_N]
 
+    # Top-N grid. Wraps every 3 cards using a modulo on the column index.
+    # Streamlit pattern - https://docs.streamlit.io
     cols = st.columns(3, gap="large")
     for i, r in enumerate(top):
         with cols[i % 3]:
@@ -320,10 +345,12 @@ def render_results(results: list[dict], target_date: date) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Card design — inspired by Norgeskart-style route list (clean white cards
+# Card design - inspired by Norgeskart-style route list (clean white cards
 # on a soft background, 4-dot SAC indicator, 3-column metrics row).
 # ---------------------------------------------------------------------------
 
+# Inline CSS for the result cards (white card, image hero, 3-stat row,
+# coloured verdict pill, optional amber safety note).
 _CARD_CSS: str = """
 <style>
   .hike-card {
@@ -429,6 +456,7 @@ def _render_result_card(
     verdict = r["adjusted"]
     emoji = VERDICT_EMOJI.get(verdict, "⚪")
 
+    # Naismith's rule: 12 min/km + 10 min per 100 m of ascent, used for time estimate.
     ascent = trail["max_alt_m"] - trail["min_alt_m"]
     time_est = naismith_time(trail["length_km"], ascent)
 
@@ -488,6 +516,8 @@ def _render_result_card(
         """,
         unsafe_allow_html=True,
     )
+    # Clicking "View details" stashes the trail + date into session state
+    # and jumps to the hidden Trail_Detail page.
     key = f"detail_{'tail_' if compact else ''}{trail['id']}"
     if st.button("View details", key=key, width="stretch"):
         st.session_state["selected_trail_id"] = trail["id"]
@@ -506,6 +536,8 @@ def render_recent_community_feed() -> None:
         ),
         unsafe_allow_html=True,
     )
+    # Pull the most recent user-submitted hike reports. Used as light social
+    # proof and as a hint that submitted reports feed the next retrain.
     rows = db_manager.get_recent_user_reports(limit=6)
     if not rows:
         st.caption(
@@ -533,6 +565,7 @@ def _answers_signature(answers: dict) -> str:
     return json.dumps(serialisable, sort_keys=True, default=str)
 
 
+# Page entry point: nav + sidebar + theme, then quiz/results flow.
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
@@ -547,6 +580,8 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
+    # Quiz options (canton list, min/max length, etc.) come from a single
+    # SQL roll-up so the widgets always match what's actually in the DB.
     meta = db_manager.get_trail_metadata()
     if not meta["cantons"]:
         st.error("No trails seeded. Restart the app or run bootstrap.")

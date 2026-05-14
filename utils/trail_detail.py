@@ -13,6 +13,13 @@ The pure functions have no side effects; the photo fetcher calls a free
 public API (no key) and is wrapped in ``st.cache_data``.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 import math
@@ -35,11 +42,16 @@ def synthetic_route(
     the map is a circle whose perimeter equals ``length_km``. Always shown
     with an "approximate" caveat in the UI.
     """
+    # Circumference equation reversed: radius_km = length_km / (2*pi).
+    # The latitude conversion uses 111 km per degree; longitude shrinks with
+    # cos(latitude) because meridians converge toward the poles.
     radius_km = max(length_km, 0.5) / (2 * math.pi)
     radius_lat = radius_km / 111.0
     radius_lon = radius_km / max(111.0 * math.cos(math.radians(lat)), 1e-3)
 
     pts: list[tuple[float, float]] = []
+    # Walk an evenly spaced circle of n_points+1 vertices so the polyline
+    # closes back on itself.
     for i in range(n_points + 1):
         angle = 2 * math.pi * i / n_points
         pts.append(
@@ -53,6 +65,9 @@ def synthetic_route(
 # Weather interpretation
 # ---------------------------------------------------------------------------
 
+# Helper banders below convert a continuous weather measurement into a
+# short human label plus an actionable note. Thresholds are calibrated to
+# typical Swiss alpine hiking advice (DAV / SAC guidance).
 def _temp_band(t: float) -> tuple[str, str]:
     if t < -5:
         return "very cold", "winter gear and avalanche awareness essential"
@@ -104,6 +119,7 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
     ``cloud``, ``snow`` and ``bullets`` (list of plain-text reasons that
     drove the verdict). Empty/None values are gracefully skipped.
     """
+    # Defensive empty payload when no cached forecast exists for the day.
     if not snapshot:
         return {
             "headline": "No cached forecast for this day yet — refresh the weather "
@@ -138,6 +154,8 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
     else:
         out["cloud"] = None
 
+    # Compare the snowline to the trail's summit. A positive margin means
+    # the trail is snow-free; a negative margin means snow on the upper part.
     if snow is not None:
         margin = snow - max_alt
         if margin >= 300:
@@ -158,6 +176,7 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
     else:
         out["snow"] = None
 
+    # Build the bulleted reasons that explain the verdict in plain English.
     bullets: list[str] = []
     if temp is not None:
         if -2 <= temp <= 22 and verdict == "SAFE":
@@ -188,6 +207,8 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
             "A mix of indicators — see the per-feature breakdown above for the full picture."
         )
 
+    # Choose a headline tone keyed by SAC grade. Harder grades get sterner
+    # language even on SAFE verdicts to keep users honest about the terrain.
     grade = trail["difficulty"]
     is_hard = grade in {"T4", "T5", "T6"}
     is_demanding = grade in {"T3", "T4", "T5", "T6"}
@@ -233,6 +254,8 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
         verdict, "Forecast cached — see the breakdown below."
     )
 
+    # Promote a terrain caveat to the top of the bullet list on hard grades
+    # so users see the warning before any positive weather indicators.
     if is_hard and verdict in {"SAFE", "BORDERLINE"}:
         bullets.insert(0, (
             f"⚠️ **Terrain caveat:** {grade} routes carry inherent risk — exposure, "
@@ -248,6 +271,8 @@ def interpret_weather(snapshot: Optional[dict], trail: dict, verdict: str) -> di
 # Tricky-parts analyser
 # ---------------------------------------------------------------------------
 
+# Canonical safety blurbs per SAC grade. The icon + title + blurb fields
+# feed directly into the "Tricky parts" cards in the trail detail tab.
 _DIFFICULTY_NOTES: dict[str, dict] = {
     "T1": {"icon": "🚶",
            "title": "Easy hiking path (T1)",
@@ -292,6 +317,8 @@ _DIFFICULTY_NOTES: dict[str, dict] = {
 
 def analyse_tricky_sections(trail: dict, snapshot: Optional[dict]) -> list[dict]:
     """Return a list of rule-based hazard cards for this trail."""
+    # Each appended dict produces one hazard card in the UI. Order matters:
+    # safety preface first, then terrain, then route logistics, then weather.
     parts: list[dict] = []
     grade = trail["difficulty"]
 
@@ -328,6 +355,7 @@ def analyse_tricky_sections(trail: dict, snapshot: Optional[dict]) -> list[dict]
             "category": "Safety",
         })
 
+    # Effort cards: tier-based on elevation gain and overall route length.
     elev_gain = trail["max_alt_m"] - trail["min_alt_m"]
     if elev_gain >= 1200:
         parts.append({
@@ -474,11 +502,17 @@ def analyse_tricky_sections(trail: dict, snapshot: Optional[dict]) -> list[dict]
 # Wikimedia Commons photo search
 # ---------------------------------------------------------------------------
 
+# Wikimedia Commons API - https://commons.wikimedia.org/w/api.php
+# Free, no-key public endpoint used to look up Creative Commons hiking photos.
 _COMMONS_API: str = "https://commons.wikimedia.org/w/api.php"
+# Wikimedia request etiquette - https://meta.wikimedia.org/wiki/User-Agent_policy
+# Commons asks third-party clients to identify themselves via User-Agent.
 _USER_AGENT: str = "SwissHikingForecaster/1.0 (educational project)"
 _IMAGE_EXTS: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
 
 
+# Streamlit caching pattern - https://docs.streamlit.io
+# Cache search results for 24h to stay polite to the Commons API.
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_trail_images(query: str, limit: int = 4) -> list[dict]:
     """Search Wikimedia Commons for free-licensed photos matching ``query``.
@@ -489,6 +523,10 @@ def fetch_trail_images(query: str, limit: int = 4) -> list[dict]:
     """
     if not query:
         return []
+    # MediaWiki search action - https://www.mediawiki.org/wiki/API:Search
+    # action=query + list=search returns the top matching files. We over-fetch
+    # then filter client-side because the API has no way to require image
+    # extensions; namespace 6 restricts results to the File: namespace.
     try:
         resp = requests.get(
             _COMMONS_API,
@@ -506,8 +544,13 @@ def fetch_trail_images(query: str, limit: int = 4) -> list[dict]:
         resp.raise_for_status()
         hits = resp.json().get("query", {}).get("search", [])
     except Exception:
+        # Any network/parse failure falls back to an empty list so the caller
+        # can render a fallback image instead of crashing the page.
         return []
 
+    # Build the result list: keep only files with image extensions, build
+    # a Special:FilePath thumbnail URL (auto-resizes server-side), and link
+    # back to the Commons page so users can see the original licence.
     out: list[dict] = []
     for hit in hits:
         title = hit.get("title", "")
@@ -526,7 +569,7 @@ def fetch_trail_images(query: str, limit: int = 4) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Visual helpers — used by the redesigned cards/headers
+# Visual helpers - used by the redesigned cards/headers
 # ---------------------------------------------------------------------------
 
 # (colour, filled-out-of-4) per SAC grade. Mirrors the four-dot escalation
@@ -554,6 +597,8 @@ def difficulty_dots_html(grade: str, dot_size_px: int = 11) -> str:
     """Return an inline-flex HTML span showing the SAC grade as 4 dots."""
     colour, filled = _DIFFICULTY_DOTS.get(grade, ("#888", 0))
     dots: list[str] = []
+    # Render exactly 4 dots; the first ``filled`` are coloured solid, the
+    # rest stay outlined to convey "max difficulty out of 4 visible steps".
     for i in range(4):
         bg = colour if i < filled else "transparent"
         border = colour if i < filled else "#cfd2d6"
@@ -580,6 +625,9 @@ def naismith_time(length_km: float, ascent_m: float) -> str:
     out-and-back). Good enough for an at-a-glance figure — never quote it as
     a guarantee.
     """
+    # Naismith's rule - https://en.wikipedia.org/wiki/Naismith%27s_rule
+    # 12 min/km flat + 10 min per 100 m of ascent. divmod converts the
+    # total minutes into a (hours, minutes) tuple for display.
     minutes = max(1, length_km * 12 + (ascent_m / 100.0) * 10)
     h, m = divmod(int(round(minutes)), 60)
     if h == 0:
@@ -593,11 +641,14 @@ def naismith_time(length_km: float, ascent_m: float) -> str:
 # Top vs Bottom weather (lapse-rate projection)
 # ---------------------------------------------------------------------------
 
+# Atmospheric lapse rate - https://en.wikipedia.org/wiki/Lapse_rate
+# 6.5 C cooler per 1000 m gained is the textbook average and matches the
+# value Open-Meteo uses internally for altitude adjustments.
 # Standard environmental lapse rate (°C per metre).
 _LAPSE_RATE: float = 0.0065
 # Rough wind amplification at altitude (less surface friction). Linear
 # interpolation between 1.0× at the trail bottom and ``_WIND_TOP_MULT`` at
-# the top — purely heuristic, calibrated against typical Alpine ratios.
+# the top - purely heuristic, calibrated against typical Alpine ratios.
 _WIND_TOP_MULT: float = 1.4
 
 
@@ -622,15 +673,19 @@ def weather_at_altitude(
     if snapshot is None:
         return None
 
+    # delta_m is positive when projecting upward (bottom -> top), negative
+    # when projecting downward. dict(snapshot) gives us a shallow copy to
+    # mutate without affecting the cached DB row.
     delta_m = target_alt_m - reference_alt_m
     out: dict = dict(snapshot)
 
+    # Temperature: subtract lapse_rate * delta_m (cooler the higher we go).
     if snapshot.get("temp_c") is not None:
         out["temp_c"] = snapshot["temp_c"] - _LAPSE_RATE * delta_m
 
     if snapshot.get("wind_kmh") is not None and delta_m > 0:
         # Scale to a fraction of the bottom-to-top ramp (assume ~1500 m total
-        # climb produces the full multiplier — bigger climbs cap at the multiplier).
+        # climb produces the full multiplier - bigger climbs cap at the multiplier).
         ramp = min(1.0, delta_m / 1500.0)
         out["wind_kmh"] = snapshot["wind_kmh"] * (1.0 + (_WIND_TOP_MULT - 1.0) * ramp)
 
@@ -664,6 +719,8 @@ def hazard_points(
     grade = trail["difficulty"]
     out: list[dict] = []
 
+    # Grade-based markers: alpine grades flag the summit as exposed/serious;
+    # T3 gets a softer "surefootedness" warning at the same point.
     if grade in {"T4", "T5", "T6"}:
         out.append({
             "lat": summit[0], "lon": summit[1],
@@ -677,6 +734,8 @@ def hazard_points(
             "severity": "warn",
         })
 
+    # Weather-based markers: snow at the summit, wind on the exposed
+    # 3/4 ridge, wet rock on the descent (1/4 point).
     if snapshot:
         snowline = snapshot.get("snowline_m")
         if snowline is not None and snowline < trail["max_alt_m"]:

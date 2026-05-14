@@ -6,6 +6,13 @@ back to the transparent rule-based ``label_engine`` so the UI always has
 something to display.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 from datetime import date
@@ -19,6 +26,8 @@ from ml import trail_classifier
 from utils.constants import VERDICT_COLOURS
 
 
+# Ordinal scale for the three verdicts. Shifting an index by +/-1 maps directly
+# to a step toward AVOID or SAFE, which keeps the risk-tolerance math trivial.
 VERDICT_ORDER = {"SAFE": 0, "BORDERLINE": 1, "AVOID": 2}
 # Positive shift = harsher verdict (toward AVOID). Cautious users (risk=1)
 # pull the verdict one step toward AVOID; bold users (risk=5) pull it one
@@ -41,6 +50,8 @@ DIFFICULTY_NAMES: dict[str, str] = {
 }
 
 
+# Convert a raw weather DB row into the exact feature vector the Random
+# Forest was trained on. Defaulting None to 0.0 mirrors the training pipeline.
 def _features_from_snapshot(snap: dict, trail_max_alt_m: float) -> dict:
     """Derive the 7 ML features from a single weather_snapshots row dict."""
     temp = snap.get("temp_c") or 0.0
@@ -69,6 +80,8 @@ def predict_for_snapshot(
     ``source`` is ``"ml"`` if the trained Random Forest produced the verdict,
     or ``"rules"`` if it fell back to the rule-based label engine.
     """
+    # Prefer the trained ML model when available; on any failure (corrupt
+    # pickle, missing feature, etc.) silently fall through to the rules engine.
     if trail_classifier.model_exists():
         try:
             features = _features_from_snapshot(snapshot, trail_max_alt_m)
@@ -110,8 +123,10 @@ def apply_risk_tolerance(
     """
     shift = RISK_THRESHOLD_SHIFT.get(risk, 0)
     code = VERDICT_ORDER[verdict] + shift
-    code = max(0, min(2, code))
+    code = max(0, min(2, code))  # clamp into the 0..2 verdict range
     new = {0: "SAFE", 1: "BORDERLINE", 2: "AVOID"}[code]
+    # Hard safety lock: T4+ terrain is never displayed as SAFE no matter how
+    # bold the user has set the slider.
     if difficulty in HARD_GRADES and new == "SAFE":
         return "BORDERLINE"
     return new
@@ -141,6 +156,7 @@ def apply_difficulty_floor(
     caveats: list[str] = []
     final = verdict
 
+    # Rule 1: no SAFE on T4-T6, regardless of weather.
     if difficulty in HARD_GRADES and final == "SAFE":
         final = "BORDERLINE"
         caveats.append(
@@ -151,6 +167,9 @@ def apply_difficulty_floor(
             "for the *weather*, not for the *route*."
         )
 
+    # Rule 2: on T5/T6 any non-trivial weather concern downgrades the
+    # verdict all the way to AVOID. The thresholds below are deliberately
+    # tight; on alpine terrain there is no margin for error.
     if difficulty in EXTREME_GRADES and snapshot:
         wind = snapshot.get("wind_kmh") or 0.0
         precip = snapshot.get("precip_mm") or 0.0
@@ -207,6 +226,8 @@ def verdict_colour(verdict: str) -> str:
     return VERDICT_COLOURS.get(verdict, "#888888")
 
 
+# Streamlit caching pattern - https://docs.streamlit.io/library/advanced-features/caching
+# Cache the batched verdict lookup for 1 hour, keyed on (date, trail-id tuple).
 @st.cache_data(ttl=3600)
 def get_verdicts_for_date(
     snapshot_date_iso: str, trail_ids: tuple[int, ...]
@@ -229,6 +250,8 @@ def get_verdicts_for_date(
     callers preserve the grey-marker fallback.
     """
     snapshot_date = date.fromisoformat(snapshot_date_iso)
+    # One DB roundtrip for all snapshots and one for all trail metadata; the
+    # rest of the function works in-memory.
     snapshots = db_manager.get_all_snapshots_for_date(snapshot_date)
     trail_meta = {t["id"]: dict(t) for t in db_manager.get_all_trails()}
 
@@ -253,6 +276,8 @@ def get_verdicts_for_date(
         feature_rows.append(feats)
         feature_tids.append(tid)
 
+    # Fast path: feed every trail into a single vectorised predict_batch call
+    # so we pay the model-load cost once per page render rather than per trail.
     if feature_rows and trail_classifier.model_exists():
         try:
             df = pd.DataFrame(feature_rows)

@@ -6,6 +6,13 @@ business logic. Pages can opt into the same alpine discovery look by calling
 ``unsafe_allow_html=True``.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 from html import escape
@@ -14,11 +21,16 @@ from typing import Iterable
 import streamlit as st
 
 
+# Unsplash CDN photo - https://unsplash.com
+# Hero background used by every page; URL params request an auto-format,
+# cropped, large (1800 px wide) version for a crisp full-bleed backdrop.
 ALPINE_BACKGROUND_IMAGE: str = (
     "https://images.unsplash.com/photo-1506905925346-21bda4d32df4"
     "?auto=format&fit=crop&w=1800&q=85"
 )
 
+# Stock photo rotation used by the discovery cards. image_for_index() cycles
+# through this tuple deterministically so the same trail keeps the same image.
 ALPINE_CARD_IMAGES: tuple[str, ...] = (
     "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=900&q=85",
     "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=900&q=85",
@@ -29,6 +41,10 @@ ALPINE_CARD_IMAGES: tuple[str, ...] = (
 )
 
 
+# Streamlit custom CSS pattern - https://docs.streamlit.io
+# Single CSS payload injected once per page via apply_app_theme(). The
+# :root custom properties below act as the design tokens (background,
+# ink, pine green, moss, amber, danger, etc.) reused across components.
 APP_THEME_CSS: str = (
     """
 <style>
@@ -335,6 +351,8 @@ APP_THEME_CSS: str = (
   }
 </style>
 """.replace(
+        # Substitute the Unsplash hero URL into the CSS template at module
+        # import time so the rendered stylesheet contains an absolute URL.
         "__ALPINE_BACKGROUND_IMAGE__", ALPINE_BACKGROUND_IMAGE
     )
 )
@@ -342,9 +360,13 @@ APP_THEME_CSS: str = (
 
 def apply_app_theme() -> None:
     """Inject the shared alpine discovery theme."""
+    # Streamlit custom CSS pattern - https://docs.streamlit.io
+    # unsafe_allow_html is required to inject raw <style> tags.
     st.markdown(APP_THEME_CSS, unsafe_allow_html=True)
 
 
+# Loose label-to-class matcher so pages can pass things like "SAFE today"
+# or "Borderline" and still pick up the correct pill colour.
 def status_class(label: str | None) -> str:
     """Return a CSS class for a verdict-like label."""
     normalized = str(label or "").lower().replace("today", "").strip()
@@ -357,6 +379,8 @@ def status_class(label: str | None) -> str:
     return "unknown"
 
 
+# Modulo wrap means callers can pass any non-negative integer and get a
+# deterministic image - same index always yields the same picture.
 def image_for_index(index: int) -> str:
     """Return a stable alpine card image for a zero-based card index."""
     return ALPINE_CARD_IMAGES[index % len(ALPINE_CARD_IMAGES)]
@@ -364,6 +388,8 @@ def image_for_index(index: int) -> str:
 
 def page_hero(title: str, subtitle: str, eyebrow: str = "Swiss Hike Forecaster") -> str:
     """HTML for a consistent page hero."""
+    # html.escape() guards against any user-supplied content sneaking HTML
+    # into the page even though current callers pass only static strings.
     return (
         '<div class="page-hero">'
         f'<div class="page-eyebrow">{escape(eyebrow)}</div>'
@@ -388,6 +414,8 @@ def section_heading(title: str, subtitle: str, eyebrow: str | None = None) -> st
     )
 
 
+# Render an inline row of small statistic pills (e.g. distance, ascent,
+# difficulty) from a sequence of (label, value) tuples.
 def stat_pills_html(items: Iterable[tuple[str, str]]) -> str:
     """Render small statistic pills from ``(label, value)`` pairs."""
     pills = "".join(

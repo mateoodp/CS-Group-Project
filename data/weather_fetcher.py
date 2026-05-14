@@ -15,6 +15,13 @@ Data fetched here is written through ``db_manager`` into the
 ``weather_snapshots`` table.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -28,8 +35,11 @@ from data import db_manager
 # Constants
 # ---------------------------------------------------------------------------
 
+# Open-Meteo Forecast API - https://open-meteo.com/en/docs
 FORECAST_URL: str = "https://api.open-meteo.com/v1/forecast"
+# Open-Meteo Historical Archive API - https://open-meteo.com/en/docs/historical-weather-api
 ARCHIVE_URL: str = "https://archive-api.open-meteo.com/v1/archive"
+# Swisstopo GeoAdmin API - https://docs.geo.admin.ch/access-data/identify-features.html
 GEOADMIN_URL: str = "https://api3.geo.admin.ch/rest/services/all/MapServer/identify"
 
 CACHE_TTL_HOURS: int = 1  # how old live data can be before refetch
@@ -38,6 +48,7 @@ REQUEST_TIMEOUT_S: int = 15  # seconds before giving up on an API call
 FORECAST_DAYS: int = 7  # Open-Meteo forecast horizon requested
 
 # Daily variables shared by forecast and archive endpoints.
+# These names must match Open-Meteo's documented field names exactly.
 _DAILY_VARS: list[str] = [
     "temperature_2m_max",
     "temperature_2m_min",
@@ -58,11 +69,14 @@ _HOURLY_VARS: list[str] = ["freezing_level_height"]
 
 def _get(url: str, params: dict) -> dict:
     """Thin wrapper around ``requests.get`` with timeout and clear errors."""
+    # requests HTTP call - target API is determined by the caller.
     try:
         resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT_S)
     except requests.RequestException as e:
+        # Wrap network failures so the rest of the app sees a single error type.
         raise RuntimeError(f"Network error calling {url}: {e}") from e
     if resp.status_code != 200:
+        # Truncate the body to keep error messages readable in the UI/logs.
         raise RuntimeError(
             f"API call to {url} failed: HTTP {resp.status_code} — {resp.text[:200]}"
         )
@@ -73,12 +87,14 @@ def _hourly_to_daily_snowline(hourly: dict) -> dict[str, float]:
     """Collapse hourly freezing_level_height into a per-day mean (metres)."""
     times = hourly.get("time", [])
     levels = hourly.get("freezing_level_height", [])
+    # Bucket each hourly reading by its date prefix (YYYY-MM-DD).
     buckets: dict[str, list[float]] = {}
     for t, lvl in zip(times, levels):
         if lvl is None:
             continue
         day = t[:10]
         buckets.setdefault(day, []).append(float(lvl))
+    # Daily snowline = arithmetic mean of the 24 hourly samples.
     return {d: sum(v) / len(v) for d, v in buckets.items() if v}
 
 
@@ -98,7 +114,10 @@ def _estimated_snowline(temp_c: float, point_elevation_m: float) -> float:
     """
     if temp_c is None:
         return 0.0
+    # Inverse lapse-rate calculation: how much higher must we climb from the
+    # measurement point to reach the 0 degree isotherm.
     snow = point_elevation_m + (temp_c / LAPSE_RATE_C_PER_M)
+    # Clamp to sane bounds (Earth's troposphere caps useful values well below 6km).
     return max(0.0, min(snow, 6000.0))
 
 
@@ -112,6 +131,8 @@ def _daily_block_to_rows(
     times = daily.get("time", [])
     rows: list[dict] = []
     for i, day in enumerate(times):
+        # Derive a daily mean temperature from min/max; gracefully degrade if
+        # either value is missing.
         tmax = daily["temperature_2m_max"][i]
         tmin = daily["temperature_2m_min"][i]
         temp_mean = (
@@ -119,6 +140,8 @@ def _daily_block_to_rows(
             if tmax is not None and tmin is not None
             else (tmax if tmax is not None else tmin)
         )
+        # Prefer the API's freezing level; fall back to the lapse-rate estimate
+        # (archive endpoint frequently returns nulls for the hourly variable).
         snowline = snowline_by_day.get(day)
         if snowline is None and temp_mean is not None:
             snowline = _estimated_snowline(temp_mean, point_elevation_m)
@@ -128,6 +151,8 @@ def _daily_block_to_rows(
                 "snapshot_date": day,
                 "temp_c": temp_mean,
                 "wind_kmh": daily["wind_speed_10m_max"][i],
+                # Combine liquid rain and water-equivalent snowfall into a
+                # single precipitation column for the downstream features.
                 "precip_mm": (daily["precipitation_sum"][i] or 0.0)
                 + (daily["snowfall_sum"][i] or 0.0),
                 "snowline_m": snowline,
@@ -138,7 +163,7 @@ def _daily_block_to_rows(
 
 
 # ---------------------------------------------------------------------------
-# Public API — forecast / archive
+# Public API - forecast / archive
 # ---------------------------------------------------------------------------
 
 
@@ -148,6 +173,9 @@ def fetch_forecast(lat: float, lon: float) -> dict:
     Returns the raw JSON dict from Open-Meteo (top-level, not just ``daily``).
     Hourly freezing_level_height is included so callers can derive the snowline.
     """
+    # Open-Meteo Forecast API - https://open-meteo.com/en/docs
+    # We request 7 forecast days in Europe/Zurich local time so dates line up
+    # with the rest of the app.
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -161,6 +189,8 @@ def fetch_forecast(lat: float, lon: float) -> dict:
 
 def fetch_archive(lat: float, lon: float, start: date, end: date) -> dict:
     """Fetch historical daily weather between ``start`` and ``end``."""
+    # Open-Meteo Historical Archive API - https://open-meteo.com/en/docs/historical-weather-api
+    # Used once per trail to seed two years of training data.
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -179,6 +209,8 @@ def fetch_trail_elevation(lat: float, lon: float) -> Optional[float]:
     Open-Meteo returns the requested point's elevation in every forecast call,
     so this is essentially free. Returns ``None`` on failure.
     """
+    # Open-Meteo Forecast API - https://open-meteo.com/en/docs
+    # Minimal call (no daily/hourly vars) just to read the "elevation" field.
     try:
         data = _get(
             FORECAST_URL,
@@ -186,6 +218,7 @@ def fetch_trail_elevation(lat: float, lon: float) -> Optional[float]:
         )
         return data.get("elevation")
     except Exception:
+        # Best-effort: any failure (network, parse, missing key) returns None.
         return None
 
 
@@ -201,11 +234,14 @@ def refresh_cache(trail_id: int, lat: float, lon: float, force: bool = False) ->
     (``< CACHE_TTL_HOURS`` since the most recent ``snapshot_date``), this is
     a no-op unless ``force=True``.
     """
+    # Fast-path: skip the network call if every forecast day is already cached
+    # AND the newest row is younger than the TTL.
     if not force and _forecast_cache_complete(trail_id):
         age_h = db_manager.get_latest_snapshot_age_hours(trail_id)
         if age_h is not None and age_h < CACHE_TTL_HOURS:
             return 0
 
+    # Fetch fresh data, derive the daily snowline series, then bulk-upsert.
     data = fetch_forecast(lat, lon)
     snowline = _hourly_to_daily_snowline(data.get("hourly", {}))
     elev = data.get("elevation") or 0.0
@@ -217,6 +253,7 @@ def refresh_cache(trail_id: int, lat: float, lon: float, force: bool = False) ->
 def _forecast_cache_complete(trail_id: int) -> bool:
     """Return True when all requested forecast days are cached for a trail."""
     today = date.today()
+    # Check today plus the next FORECAST_DAYS-1 dates; any miss returns False.
     return all(
         db_manager.get_weather_for_date(trail_id, today + timedelta(days=i)) is not None
         for i in range(FORECAST_DAYS)
@@ -231,9 +268,11 @@ def seed_historical_weather(
     Idempotent — upsert deduplicates by (trail_id, snapshot_date). Returns
     the number of rows upserted.
     """
+    # Archive endpoint only covers up to "yesterday"; end is exclusive of today.
     end = date.today() - timedelta(days=1)
     start = end - timedelta(days=int(365 * years))
     data = fetch_archive(lat, lon, start, end)
+    # Reuse the same daily-snowline helper used for the forecast endpoint.
     snowline = _hourly_to_daily_snowline(data.get("hourly", {}))
     elev = data.get("elevation") or 0.0
     rows = _daily_block_to_rows(trail_id, data.get("daily", {}), snowline, elev)
@@ -242,7 +281,7 @@ def seed_historical_weather(
 
 
 # ---------------------------------------------------------------------------
-# CLI helper — python -m data.weather_fetcher
+# CLI helper - python -m data.weather_fetcher
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":

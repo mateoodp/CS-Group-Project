@@ -13,16 +13,26 @@ The Trail Detail page is deliberately **not** in the nav — users only
 reach it by clicking a hike from one of the four primary pages.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 import streamlit as st
 
 
 # ---------------------------------------------------------------------------
-# Injected CSS — hides the default page list in the sidebar and tightens
+# Injected CSS - hides the default page list in the sidebar and tightens
 # the top-of-page padding so the horizontal nav reads as the real header.
 # ---------------------------------------------------------------------------
 
+# Streamlit custom CSS pattern - https://docs.streamlit.io
+# CSS rules below target Streamlit's internal data-testid attributes to hide
+# default chrome (sidebar nav, toolbar) and re-style page-link buttons.
 _NAV_CSS: str = """
 <style>
   /* Hide Streamlit's auto-generated sidebar page navigation. */
@@ -64,7 +74,7 @@ _NAV_CSS: str = """
 
 
 # Single source of truth for the visible nav entries. Keep in sync with
-# the file paths under pages/ — this list drives both the rendered links
+# the file paths under pages/ - this list drives both the rendered links
 # and any "back to {section}" buttons inside the Trail Detail page.
 NAV_ENTRIES: list[tuple[str, str, str]] = [
     ("pages/1_Find.py", "Find a hike", "🧭"),
@@ -76,8 +86,10 @@ NAV_ENTRIES: list[tuple[str, str, str]] = [
 
 def render_top_nav() -> None:
     """Render the horizontal top nav. Call once per page."""
+    # Streamlit custom CSS pattern - https://docs.streamlit.io
     st.markdown(_NAV_CSS, unsafe_allow_html=True)
 
+    # Layout: a wider brand column on the left, then equal-width nav entries.
     cols = st.columns([2] + [1] * len(NAV_ENTRIES), gap="small")
     with cols[0]:
         st.page_link(

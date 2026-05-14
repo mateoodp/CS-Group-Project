@@ -19,6 +19,13 @@ Run with:
     streamlit run app.py
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 from html import escape
@@ -37,6 +44,7 @@ from utils.trail_detail import difficulty_dots_html, naismith_time
 # ---------------------------------------------------------------------------
 # Page config - MUST be the first Streamlit command in the script.
 # ---------------------------------------------------------------------------
+# Streamlit pattern - https://docs.streamlit.io
 st.set_page_config(
     page_title=APP_TITLE,
     page_icon="mountain",
@@ -45,6 +53,8 @@ st.set_page_config(
 )
 
 
+# Curated list of hero/featured trail names. Used to bias the landing page
+# towards iconic Swiss destinations before falling back to the full catalogue.
 PREFERRED_DESTINATIONS: tuple[str, ...] = (
     "Gornergrat Panorama",
     "Aletsch 闂?M闂佺儵鏅濋悘姊沞lensee",
@@ -54,6 +64,8 @@ PREFERRED_DESTINATIONS: tuple[str, ...] = (
     "Saas-Fee 闂?Hannig",
 )
 
+# Inline CSS for the landing page. Defines the alpine color palette,
+# card layouts (hero, destination, feature) and responsive breakpoints.
 LANDING_CSS: str = """
 <style>
   :root {
@@ -551,6 +563,8 @@ def _row_value(row, key: str, default=None):
         return default
 
 
+# Map an SAC difficulty grade to a coarse status label shown on landing cards.
+# T4 and above are alpine routes, T3 is demanding, anything below is general hiking.
 def _landing_status_for_difficulty(difficulty: str) -> str:
     if difficulty in {"T4", "T5", "T6"}:
         return "Avoid"
@@ -567,6 +581,7 @@ def _landing_verdict_for_difficulty(difficulty: str) -> str:
     return "SAFE"
 
 
+# Convert raw kilometres into a human friendly duration bucket for cards.
 def _landing_duration_for_length(length_km: float) -> str:
     if length_km <= 5.5:
         return "Half day"
@@ -579,6 +594,8 @@ def landing_card_from_trail_row(
     row, image_url: str, image_notice: str = ""
 ) -> dict[str, str]:
     """Format one trail row for the discovery landing cards."""
+    # Pull each field defensively (rows may come from sqlite Row or dict),
+    # then derive the display strings, verdict pill and detail page URL.
     trail_id = str(_row_value(row, "id", "") or "")
     length_km = float(_row_value(row, "length_km", 0) or 0)
     difficulty = str(_row_value(row, "difficulty", "T2") or "T2")
@@ -619,6 +636,8 @@ def landing_card_from_trail_row(
     }
 
 
+# Pick up to six trails for the landing carousel. We try the curated
+# PREFERRED_DESTINATIONS list first, then top up with whatever else is loaded.
 def _select_landing_trails(trails: list) -> list:
     selected = []
     used_ids = set()
@@ -646,6 +665,8 @@ def _select_landing_trails(trails: list) -> list:
     return selected
 
 
+# Render the three small "stat pills" on the hero (catalogue size, weather
+# rows cached, model readiness) using inline HTML.
 def _render_stats_pills(n_trails: int, n_weather: int, has_model: bool) -> None:
     model_label = "Ready" if has_model else "Retrain"
     model_hint = "model status"
@@ -661,6 +682,9 @@ def _render_stats_pills(n_trails: int, n_weather: int, has_model: bool) -> None:
     )
 
 
+# Render a single discovery card (image + verdict pill + meta + 3-stat row).
+# All user-controlled text is run through html.escape to prevent injection
+# since unsafe_allow_html is enabled below.
 def _render_home_hike_card(card: dict[str, str]) -> None:
     detail_url = escape(card["detail_url"])
     title = escape(card["title"])
@@ -720,6 +744,7 @@ def _render_destination_card(card: dict[str, str]) -> None:
     _render_home_hike_card(card)
 
 
+# Render a clickable "Forecast toolkit" tile that links to another page.
 def _render_feature_card(icon_html: str, title: str, body: str, href: str) -> None:
     html = (
         f'<a class="feature-card feature-card-link" href="{escape(href)}">'
@@ -735,6 +760,8 @@ def _render_feature_card(icon_html: str, title: str, body: str, href: str) -> No
 
 def initialise_session_state() -> None:
     """Seed shared keys used across all pages."""
+    # Streamlit pattern - https://docs.streamlit.io
+    # setdefault ensures we don't clobber values written on later reruns.
     defaults: dict = {
         "selected_trail_id": None,
         "selected_date": None,
@@ -753,6 +780,7 @@ def bootstrap() -> None:
     db_manager.setup_db()
 
 
+# Build the full landing screen: hero, top destinations, and forecast toolkit.
 def render_landing() -> None:
     n_trails = len(db_manager.get_all_trails())
     trails = db_manager.get_all_trails()
@@ -792,7 +820,9 @@ def render_landing() -> None:
     apply_app_theme()
     st.markdown(LANDING_CSS, unsafe_allow_html=True)
 
+    # Hero section: copy and CTAs on the left, featured trail card on the right.
     st.markdown('<section class="landing-section">', unsafe_allow_html=True)
+    # Streamlit pattern - https://docs.streamlit.io
     hero_left, hero_right = st.columns([1.08, 0.92], gap="large")
     with hero_left:
         st.markdown(
@@ -839,6 +869,7 @@ def render_landing() -> None:
         unsafe_allow_html=True,
     )
 
+    # 3-column responsive grid of destination cards (max 6 items).
     destination_cols = st.columns(3, gap="large")
     for i, card in enumerate(landing_cards[:6]):
         with destination_cols[i % 3]:
@@ -889,6 +920,7 @@ def render_landing() -> None:
             _render_feature_card(escape(icon), title, body, path)
 
 
+# Entry point: run one-time setup, init session state, draw navigation + landing.
 def main() -> None:
     bootstrap()
     initialise_session_state()

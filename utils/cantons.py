@@ -6,6 +6,13 @@ see the individual trails. These helpers do the aggregation and provide
 human-readable canton names.
 """
 
+# =============================================================================
+# Source attribution
+# -----------------------------------------------------------------------------
+# Built with Claude (Anthropic) AI assistance during development.
+# External sources are cited inline above the relevant code blocks.
+# =============================================================================
+
 from __future__ import annotations
 
 from datetime import date
@@ -44,6 +51,8 @@ def canton_label(code: str) -> str:
 # Verdict aggregation
 # ---------------------------------------------------------------------------
 
+# Numeric scores let us average verdicts across all trails in a canton and
+# then band the mean back into a single label for display.
 _SCORE = {"SAFE": 1, "BORDERLINE": 2, "AVOID": 3}
 _BAND_TO_VERDICT = {1: "SAFE", 2: "BORDERLINE", 3: "AVOID"}
 
@@ -61,11 +70,13 @@ def aggregate_by_canton(trails, target_date: date) -> dict[str, dict]:
     issues one batch query and caches for 1h — so this function makes
     O(1) DB roundtrips regardless of trail count.
     """
+    # Sorting trail ids gives a stable cache key for get_verdicts_for_date.
     trail_ids = tuple(sorted(t["id"] for t in trails))
     verdicts = predictions.get_verdicts_for_date(
         target_date.isoformat(), trail_ids
     )
 
+    # First pass: group trails by canton, collecting coordinates and scores.
     buckets: dict[str, dict] = {}
     for t in trails:
         b = buckets.setdefault(t["canton"], {
@@ -77,6 +88,8 @@ def aggregate_by_canton(trails, target_date: date) -> dict[str, dict]:
         v = verdicts.get(t["id"], {}).get("verdict", "—")
         b["scores"].append(_SCORE.get(v))
 
+    # Second pass: collapse each canton's bucket into a single summary dict
+    # (average verdict, centroid for the map marker, data coverage percent).
     out: dict[str, dict] = {}
     for code, b in buckets.items():
         valid_scores = [s for s in b["scores"] if s is not None]
