@@ -35,6 +35,7 @@ from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
 from utils.sidebar import render_shared_sidebar
 from utils.theme import apply_app_theme, page_hero, section_heading
 from utils.topnav import render_top_nav
+from utils.route_images import trail_id_from_query_params
 from utils.trail_detail import (
     analyse_tricky_sections,
     difficulty_dots_html,
@@ -769,6 +770,10 @@ def main() -> None:
     render_top_nav()
     render_shared_sidebar()
     apply_app_theme()
+
+    query_trail_id = trail_id_from_query_params(st.query_params)
+    if query_trail_id is not None:
+        st.session_state["selected_trail_id"] = query_trail_id
 
     trail_id = st.session_state.get("selected_trail_id")
     if trail_id is None:

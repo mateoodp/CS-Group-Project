@@ -58,7 +58,11 @@ def render_quiz(meta: dict) -> dict | None:
     )
 
     today = date.today()
-    with st.form("recommend_quiz"):
+    # Incrementing this counter changes every widget key, forcing Streamlit to
+    # create fresh widget instances with default values on the next rerun.
+    v = st.session_state.get("quiz_reset_counter", 0)
+
+    with st.container(border=True):
         c1, c2 = st.columns(2)
         with c1:
             cantons = st.multiselect(
@@ -66,18 +70,21 @@ def render_quiz(meta: dict) -> dict | None:
                 options=meta["cantons"],
                 placeholder="Any canton",
                 help="Leave empty to search all Swiss cantons.",
+                key=f"quiz_cantons_{v}",
             )
             regions = st.multiselect(
                 "Regions",
                 options=meta["regions"],
                 placeholder="Any region",
                 help="Alps · Pre-Alps · Jura · Mittelland. Empty = all.",
+                key=f"quiz_regions_{v}",
             )
             difficulties = st.multiselect(
                 "SAC grade",
                 options=meta["difficulties"],
                 placeholder="Any grade",
                 help="T1 = strolling · T6 = serious alpine. Empty = all.",
+                key=f"quiz_difficulties_{v}",
             )
         with c2:
             length_lo, length_hi = st.slider(
@@ -89,6 +96,7 @@ def render_quiz(meta: dict) -> dict | None:
                     float(int(meta["max_length_km"]) + 1),
                 ),
                 step=0.5,
+                key=f"quiz_length_{v}",
                 help="Route length in kilometres.",
             )
             alt_lo, alt_hi = st.slider(
@@ -97,6 +105,7 @@ def render_quiz(meta: dict) -> dict | None:
                 max_value=int(meta["max_max_alt_m"]),
                 value=(int(meta["min_max_alt_m"]), int(meta["max_max_alt_m"])),
                 step=50,
+                key=f"quiz_alt_{v}",
                 help="Maximum altitude reached by the trail.",
             )
             mode = st.radio(
@@ -104,6 +113,7 @@ def render_quiz(meta: dict) -> dict | None:
                 ["Today", "Pick a date"],
                 horizontal=True,
                 help=f"Forecasts cover today + the next {FORECAST_HORIZON_DAYS} days.",
+                key=f"quiz_mode_{v}",
             )
             if mode == "Today":
                 chosen_date = today
@@ -114,10 +124,11 @@ def render_quiz(meta: dict) -> dict | None:
                     value=today,
                     min_value=today,
                     max_value=today + timedelta(days=FORECAST_HORIZON_DAYS),
+                    key=f"quiz_date_{v}",
                 )
 
-        submitted = st.form_submit_button(
-            "🧭 Find matching hikes", type="primary", width="stretch"
+        submitted = st.button(
+            "🧭 Find my best hikes", type="primary", use_container_width=True
         )
 
     if not submitted:
@@ -561,23 +572,23 @@ def main() -> None:
         render_recent_community_feed()
         return
 
-    # 2) "Re-run" / "Reset" controls so the user can refresh or start over.
-    bar = st.columns([1, 1, 4])
+    # 2) "Reset" control so the user can start over.
+    bar = st.columns([1, 5])
     with bar[0]:
-        rerun_clicked = st.button("🔁 Re-run search", width="stretch")
-    with bar[1]:
-        if st.button("✖ Clear & restart", width="stretch"):
+        if st.button("✖ Clear & restart", use_container_width=True):
             st.session_state.pop("find_answers", None)
             st.session_state.pop("find_results", None)
             st.session_state.pop("find_answers_sig", None)
+            st.session_state["quiz_reset_counter"] = (
+                st.session_state.get("quiz_reset_counter", 0) + 1
+            )
             st.rerun()
 
     # 3) Compute (or reuse) results. We cache by a hash of the answers, so
     #    flipping pages / clicking buttons doesn't re-fetch all 234 trails.
     sig = _answers_signature(answers)
     cache_hit = (
-        not rerun_clicked
-        and st.session_state.get("find_answers_sig") == sig
+        st.session_state.get("find_answers_sig") == sig
         and st.session_state.get("find_results") is not None
     )
 

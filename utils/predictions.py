@@ -88,12 +88,10 @@ def predict_for_snapshot(
 
 
 def ensure_forecast_for_trail(trail_row) -> None:
-    """Lazy: refresh the 7-day cache for a trail if it's stale or empty."""
-    age = db_manager.get_latest_snapshot_age_hours(trail_row["id"])
-    if age is None or age >= 24:
-        weather_fetcher.refresh_cache(
-            trail_row["id"], trail_row["lat"], trail_row["lon"]
-        )
+    """Lazy: refresh the 7-day cache for a trail if it's stale or incomplete."""
+    weather_fetcher.refresh_cache(
+        trail_row["id"], trail_row["lat"], trail_row["lon"]
+    )
 
 
 def apply_risk_tolerance(
