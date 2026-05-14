@@ -25,6 +25,8 @@ table through the db_manager helpers.
 
 from __future__ import annotations
 
+import random
+import time
 from datetime import date, timedelta
 from typing import Optional
 
@@ -71,7 +73,7 @@ _HOURLY_VARS: list[str] = ["freezing_level_height"]
 # ---------------------------------------------------------------------------
 
 
-def _get(url: str, params: dict) -> dict:
+def _get(url: str, params: dict, *, _retries: int = 2) -> dict:
     """A small wrapper around requests.get with a timeout and clear errors."""
     # We don't hard-code the URL because the same function calls both
     # the forecast and the archive endpoints.
@@ -82,6 +84,12 @@ def _get(url: str, params: dict) -> dict:
         # plain RuntimeError. That way the rest of the app only has to
         # worry about one kind of error, regardless of what went wrong.
         raise RuntimeError(f"Network error calling {url}: {e}") from e
+    # Open-Meteo enforces a per-minute request cap. When we hit it, we
+    # wait for the window to roll over and try again. Jitter avoids
+    # every caller waking up at the same instant.
+    if resp.status_code == 429 and _retries > 0:
+        time.sleep(65 + random.uniform(0, 5))
+        return _get(url, params, _retries=_retries - 1)
     if resp.status_code != 200:
         # We trim the error body to the first 200 characters so the
         # message stays readable when shown in the UI or logged.
