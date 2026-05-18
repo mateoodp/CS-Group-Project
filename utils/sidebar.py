@@ -30,11 +30,12 @@ from utils.constants import (
     RISK_SLIDER_MAX,
     RISK_SLIDER_MIN,
 )
+from utils.i18n import t
 
 
 def render_shared_sidebar() -> None:
     """Draw the simplified sidebar. Safe to call on every page."""
-    st.sidebar.header("⚙️ Settings")
+    st.sidebar.header(t("⚙️ Settings"))
 
     # The risk tolerance slider lives here. utils.predictions reads its
     # value and uses it to shift displayed verdicts: lower setting makes
@@ -42,11 +43,11 @@ def render_shared_sidebar() -> None:
     # (toward SAFE). The value is stored in session state so all pages
     # can read it.
     risk = st.sidebar.slider(
-        "Risk tolerance",
+        t("Risk tolerance"),
         min_value=RISK_SLIDER_MIN,
         max_value=RISK_SLIDER_MAX,
         value=st.session_state.get("risk_tolerance", DEFAULT_RISK_TOLERANCE),
-        help=(
+        help=t(
             "1 = very cautious (verdict shifts toward AVOID). "
             "5 = bold (toward SAFE). T4+ trails are still never marked SAFE, "
             "even at risk = 5."
@@ -68,12 +69,12 @@ def render_shared_sidebar() -> None:
     selected_id = st.session_state.get("selected_trail_id")
     if selected_id is None:
         st.sidebar.caption(
-            "ℹ️ Open **🧭 Find a hike** or **🗺️ Map** to choose a trail."
+            t("ℹ️ Open **🧭 Find a hike** or **🗺️ Map** to choose a trail.")
         )
     else:
         trail = db_manager.get_trail(selected_id)
         if trail:
-            st.sidebar.caption(f"📍 Selected: **{trail['name']}**")
+            st.sidebar.caption(t("📍 Selected: **{name}**", name=trail["name"]))
             st.sidebar.caption(
-                "Weather is fetched automatically — no refresh needed."
+                t("Weather is fetched automatically — no refresh needed.")
             )

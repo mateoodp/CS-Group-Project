@@ -40,6 +40,7 @@ import streamlit as st
 from data import db_manager
 from ml import trail_classifier
 from utils.constants import APP_TITLE, DEFAULT_RISK_TOLERANCE, VERDICT_EMOJI
+from utils.i18n import t, verdict_label
 from utils.route_images import route_image_info, trail_detail_url
 from utils.sidebar import render_shared_sidebar
 from utils.theme import apply_app_theme
@@ -695,13 +696,13 @@ def _select_landing_trails(trails: list) -> list:
 # cached, whether the model is trained yet). We build them as plain
 # HTML so we have full control over the look.
 def _render_stats_pills(n_trails: int, n_weather: int, has_model: bool) -> None:
-    model_label = "Ready" if has_model else "Retrain"
-    model_hint = "model status"
+    model_label = t("Ready") if has_model else t("Retrain")
+    model_hint = t("model status")
     st.markdown(
         f"""
         <div class="stat-row">
-          <div class="stat-pill"><strong>{n_trails}</strong><span>trail catalogue</span></div>
-          <div class="stat-pill"><strong>{n_weather:,}</strong><span>weather rows cached</span></div>
+          <div class="stat-pill"><strong>{n_trails}</strong><span>{t("trail catalogue")}</span></div>
+          <div class="stat-pill"><strong>{n_weather:,}</strong><span>{t("weather rows cached")}</span></div>
           <div class="stat-pill"><strong>{model_label}</strong><span>{model_hint}</span></div>
         </div>
         """,
@@ -725,7 +726,7 @@ def _render_home_hike_card(card: dict[str, str]) -> None:
     )
     pill = (
         f'<span class="verdict-pill {escape(card["verdict_class"])}">'
-        f'{escape(card["verdict_emoji"])} {escape(card["verdict"])}</span>'
+        f'{escape(card["verdict_emoji"])} {escape(verdict_label(card["verdict"]))}</span>'
     )
     difficulty_html = str(
         card.get("difficulty_html") or difficulty_dots_html(str(card["difficulty"]))
@@ -733,7 +734,7 @@ def _render_home_hike_card(card: dict[str, str]) -> None:
     html = (
         '<div class="hike-card-link">'
         '<div class="hike-card">'
-        f'<a class="hike-card-hitbox" href="{detail_url}" aria-label="Open {title}"></a>'
+        f'<a class="hike-card-hitbox" href="{detail_url}" aria-label="{title}"></a>'
         f'<div class="hike-card-image" style="background-image:url(\'{escape(card["image_url"])}\');">'
         f"{notice_html}{pill}"
         "</div>"
@@ -748,15 +749,15 @@ def _render_home_hike_card(card: dict[str, str]) -> None:
         '<div class="hike-stats">'
         "<div>"
         f'<div class="hike-stat-value">{escape(card["time_est"])}</div>'
-        '<div class="hike-stat-label">Time</div>'
+        f'<div class="hike-stat-label">{escape(t("Time"))}</div>'
         "</div>"
         "<div>"
         f'<div class="hike-stat-value">{escape(card["ascent"])}</div>'
-        '<div class="hike-stat-label">Ascent</div>'
+        f'<div class="hike-stat-label">{escape(t("Ascent"))}</div>'
         "</div>"
         "<div>"
         f'<div class="hike-stat-value">{escape(card["length_value"])}</div>'
-        '<div class="hike-stat-label">Length</div>'
+        f'<div class="hike-stat-label">{escape(t("Length"))}</div>'
         "</div>"
         "</div>"
         "</div>"
@@ -872,11 +873,11 @@ def render_landing() -> None:
     hero_left, hero_right = st.columns([1.08, 0.92], gap="large")
     with hero_left:
         st.markdown(
-            """
+            f"""
             <div class="hero-copy">
-              <div class="eyebrow">Swiss Alpine Hiking Condition Forecaster</div>
-              <h1 class="hero-title">Discover Swiss Alpine Trails</h1>
-              <p class="hero-subtitle">AI-powered hiking condition forecasts for safer alpine decisions</p>
+              <div class="eyebrow">{escape(t("Swiss Alpine Hiking Condition Forecaster"))}</div>
+              <h1 class="hero-title">{escape(t("Discover Swiss Alpine Trails"))}</h1>
+              <p class="hero-subtitle">{escape(t("AI-powered hiking condition forecasts for safer alpine decisions"))}</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -886,14 +887,14 @@ def render_landing() -> None:
         with cta_cols[0]:
             st.page_link(
                 "pages/1_Find.py",
-                label="Find a hike",
+                label=t("Find a hike"),
                 icon="\U0001F9ED",
                 width="stretch",
             )
         with cta_cols[1]:
             st.page_link(
                 "pages/2_Map.py",
-                label="Explore map",
+                label=t("Explore map"),
                 icon="\U0001F5FA\uFE0F",
                 width="stretch",
             )
@@ -903,13 +904,13 @@ def render_landing() -> None:
     st.markdown("</section>", unsafe_allow_html=True)
 
     st.markdown(
-        """
+        f"""
         <div class="section-heading">
           <div>
-            <div class="eyebrow">Recommended routes</div>
-            <h2>Top destinations</h2>
+            <div class="eyebrow">{escape(t("Recommended routes"))}</div>
+            <h2>{escape(t("Top destinations"))}</h2>
           </div>
-          <p>Large alpine views, practical trail stats, and condition cues at a glance.</p>
+          <p>{escape(t("Large alpine views, practical trail stats, and condition cues at a glance."))}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -923,13 +924,13 @@ def render_landing() -> None:
             _render_destination_card(card)
 
     st.markdown(
-        """
+        f"""
         <div class="section-heading">
           <div>
-            <div class="eyebrow">Forecast toolkit</div>
-            <h2>Choose how you want to explore</h2>
+            <div class="eyebrow">{escape(t("Forecast toolkit"))}</div>
+            <h2>{escape(t("Choose how you want to explore"))}</h2>
           </div>
-          <p>All existing app workflows stay available from the discovery page.</p>
+          <p>{escape(t("All existing app workflows stay available from the discovery page."))}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -938,26 +939,26 @@ def render_landing() -> None:
     feature_cards = [
         (
             "🧭",
-            "Find a hike",
-            "Answer a few trail preferences and get ranked recommendations for your date.",
+            t("Find a hike"),
+            t("Answer a few trail preferences and get ranked recommendations for your date."),
             "/Find",
         ),
         (
             "🗺️",
-            "Map",
-            "Browse Swiss routes spatially with condition-aware color cues.",
+            t("Map"),
+            t("Browse Swiss routes spatially with condition-aware color cues."),
             "/Map",
         ),
         (
             "↔️",
-            "Compare",
-            "Compare two to four routes side by side before committing.",
+            t("Compare"),
+            t("Compare two to four routes side by side before committing."),
             "/Compare",
         ),
         (
             "ℹ️",
-            "About",
-            "Review model status, training tools, metrics, and project context.",
+            t("About"),
+            t("Review model status, training tools, metrics, and project context."),
             "/About",
         ),
     ]

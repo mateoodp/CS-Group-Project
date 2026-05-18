@@ -20,6 +20,7 @@ import streamlit as st
 from data import db_manager, weather_fetcher
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS
+from utils.i18n import fmt_date, t, verdict_label
 from utils.sidebar import render_shared_sidebar
 from utils.topnav import render_top_nav
 
@@ -38,10 +39,10 @@ st.set_page_config(
 def main() -> None:
     render_top_nav()
     render_shared_sidebar()
-    st.title("🗓️ Trail planner")
+    st.title(t("🗓️ Trail planner"))
     st.markdown(
-        "Tell us what kind of hike you want and when. "
-        "We will find the best trails predicted SAFE on that day."
+        t("Tell us what kind of hike you want and when. We will find the "
+          "best trails predicted SAFE on that day.")
     )
     st.divider()
 
@@ -56,24 +57,24 @@ def main() -> None:
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         difficulties = st.multiselect(
-            "Difficulty (SAC scale)",
+            t("Difficulty (SAC scale)"),
             options=meta["difficulties"],
             default=["T1", "T2", "T3"],
-            help="T1 = easy hiking path · T6 = difficult alpine route.",
+            help=t("T1 = easy hiking path · T6 = difficult alpine route."),
         )
     with col_b:
         regions = st.multiselect(
-            "Region (optional)",
+            t("Region (optional)"),
             options=meta["regions"],
             default=[],
-            help="Leave empty to search all regions.",
+            help=t("Leave empty to search all regions."),
         )
     with col_c:
         today = date.today()
         # The free Open-Meteo forecast only covers today plus the next 6
         # days, so we restrict the date picker to that window.
         target_date = st.date_input(
-            "Target date",
+            t("Target date"),
             value=today + timedelta(days=1),
             min_value=today,
             max_value=today + timedelta(days=6),
@@ -82,8 +83,8 @@ def main() -> None:
     # Only run the planner when the user actually clicks the button.
     # Without this, Streamlit would re-run the whole search every time
     # the user touched any widget on the page.
-    if st.button("Find trails", type="primary"):
-        with st.spinner("Querying forecast data…"):
+    if st.button(t("Find trails"), type="primary"):
+        with st.spinner(t("Querying forecast data…")):
             _run_planner(difficulties or None, regions or None, target_date)
 
 
@@ -103,8 +104,8 @@ def _run_planner(
     )
     if not trails:
         st.warning(
-            "No trails match those filters. "
-            "Try widening the difficulty or region."
+            t("No trails match those filters. Try widening the difficulty "
+              "or region.")
         )
         return
 
@@ -112,7 +113,7 @@ def _run_planner(
     # Streamlit pattern - https://docs.streamlit.io
     # Show a progress bar so the user knows the app is working. We update
     # it after each trail finishes so the bar moves smoothly.
-    progress = st.progress(0.0, text="Checking forecasts…")
+    progress = st.progress(0.0, text=t("Checking forecasts…"))
     for i, t in enumerate(trails):
         # Try the local database first. If we don't have weather saved for
         # this date yet, we ask Open-Meteo for it. We swallow API failures
@@ -158,7 +159,7 @@ def _run_planner(
     progress.empty()
 
     if not results:
-        st.error("No forecast data found for any matching trail on that date.")
+        st.error(t("No forecast data found for any matching trail on that date."))
         return
 
     df = pd.DataFrame(results)
@@ -174,18 +175,26 @@ def _run_planner(
 
     safe_count = (df["Verdict"] == "SAFE").sum()
     st.markdown(
-        f"**{safe_count} of {len(df)} trails** predicted SAFE on "
-        f"{target_date.strftime('%A %d %B')}."
+        t("**{safe} of {total} trails** predicted SAFE on {d}.",
+          safe=safe_count, total=len(df), d=fmt_date(target_date, "long"))
     )
 
     # Small helper that returns the CSS color we want for a single cell in
     # the Verdict column. Pandas Styler runs this function on every cell.
+    # It keys on the internal English verdict, so it runs before the
+    # display formatting below translates the label.
     def colour_verdict(val: str) -> str:
         c = VERDICT_COLOURS.get(val, "#888")
         return f"background-color:{c}; color:white; font-weight:bold;"
 
     styled = df.style.map(colour_verdict, subset=["Verdict"])
-    styled = styled.format({"Confidence": "{:.0%}"})
+    # format() swaps each verdict for its localised label at display time;
+    # relabel_index() translates the column headers. The DataFrame itself
+    # keeps English keys so the sorting and colour logic above stays valid.
+    styled = styled.format({"Verdict": verdict_label, "Confidence": "{:.0%}"})
+    styled = styled.relabel_index(
+        [t(col) for col in df.columns], axis="columns"
+    )
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
 

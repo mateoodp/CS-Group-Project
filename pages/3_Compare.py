@@ -29,6 +29,7 @@ import streamlit as st
 from data import db_manager, weather_fetcher
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
+from utils.i18n import fmt_date, t, verdict_label
 from utils.sidebar import render_shared_sidebar
 from utils.theme import apply_app_theme, page_hero, section_heading, stat_pills_html
 from utils.topnav import render_top_nav
@@ -97,9 +98,9 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
     # dropdown so the user doesn't have to re-pick their starting trail.
     st.markdown(
         section_heading(
-            "Build your shortlist",
-            "Choose a date and compare two to four candidate hikes under the same forecast window.",
-            "Side-by-side planning",
+            t("Build your shortlist"),
+            t("Choose a date and compare two to four candidate hikes under the same forecast window."),
+            t("Side-by-side planning"),
         ),
         unsafe_allow_html=True,
     )
@@ -135,7 +136,7 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
             _stored = _dt.fromisoformat(_stored).date()
         default_date = _stored if isinstance(_stored, date) and today <= _stored <= max_date else today
         chosen_date = st.date_input(
-            "Date to compare",
+            t("Date to compare"),
             value=default_date,
             min_value=today,
             max_value=max_date,
@@ -146,11 +147,11 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
         if preselected_label:
             defaults.append(preselected_label)
         chosen = st.multiselect(
-            f"Pick {MIN_TRAILS}–{MAX_TRAILS} trails",
+            t("Pick {min}–{max} trails", min=MIN_TRAILS, max=MAX_TRAILS),
             list(options.keys()),
             default=defaults,
             max_selections=MAX_TRAILS,
-            help="Use the search box to filter — start typing a trail name.",
+            help=t("Use the search box to filter — start typing a trail name."),
         )
 
     return chosen_date, [options[c] for c in chosen]
@@ -163,9 +164,9 @@ def render_inputs(all_trails) -> tuple[date, list[int]]:
 def render_bar_chart(rows: list[dict]) -> None:
     st.markdown(
         section_heading(
-            "Predicted risk",
-            "Lower is better: SAFE sits at the calmer end of the scale, AVOID at the stop-sign end.",
-            "Model verdict",
+            t("Predicted risk"),
+            t("Lower is better: SAFE sits at the calmer end of the scale, AVOID at the stop-sign end."),
+            t("Model verdict"),
         ),
         unsafe_allow_html=True,
     )
@@ -178,7 +179,7 @@ def render_bar_chart(rows: list[dict]) -> None:
             y=df["risk_score"],
             marker_color=[VERDICT_COLOURS[v] for v in df["verdict"]],
             text=[
-                f"{VERDICT_EMOJI[v]} {v}<br>{c:.0%}"
+                f"{VERDICT_EMOJI[v]} {verdict_label(v)}<br>{c:.0%}"
                 for v, c in zip(df["verdict"], df["confidence"])
             ],
             textposition="outside",
@@ -190,9 +191,10 @@ def render_bar_chart(rows: list[dict]) -> None:
         height=380,
         margin=dict(l=10, r=10, t=10, b=10),
         yaxis=dict(
-            title="Risk score (1=SAFE, 3=AVOID)",
+            title=t("Risk score (1=SAFE, 3=AVOID)"),
             tickvals=[1, 2, 3],
-            ticktext=["SAFE", "BORDERLINE", "AVOID"],
+            ticktext=[verdict_label("SAFE"), verdict_label("BORDERLINE"),
+                      verdict_label("AVOID")],
             range=[0, 3.5],
         ),
         xaxis_title="",
@@ -208,16 +210,16 @@ def render_bar_chart(rows: list[dict]) -> None:
 def render_radar_chart(rows: list[dict]) -> None:
     st.markdown(
         section_heading(
-            "Weather profile",
-            "Normalized indicators show why routes with similar grades can diverge on the same day.",
-            "Forecast shape",
+            t("Weather profile"),
+            t("Normalized indicators show why routes with similar grades can diverge on the same day."),
+            t("Forecast shape"),
         ),
         unsafe_allow_html=True,
     )
     if not rows:
         return
     fig = go.Figure()
-    categories = [label for _, label, *_ in RADAR_FIELDS]
+    categories = [t(label) for _, label, *_ in RADAR_FIELDS]
     for r in rows:
         snap = r["snapshot"] or {}
         # Convert each weather number to a 0-100 score using the min and
@@ -254,9 +256,9 @@ def render_radar_chart(rows: list[dict]) -> None:
 def render_summary_table(rows: list[dict], target_date) -> None:
     st.markdown(
         section_heading(
-            "Numbers side by side",
-            "The raw weather and route attributes behind the visual comparison.",
-            "Decision table",
+            t("Numbers side by side"),
+            t("The raw weather and route attributes behind the visual comparison."),
+            t("Decision table"),
         ),
         unsafe_allow_html=True,
     )
@@ -270,39 +272,40 @@ def render_summary_table(rows: list[dict], target_date) -> None:
         snap = r["snapshot"] or {}
         table.append(
             {
-                "Trail": r["name"],
-                "Grade": r["difficulty"],
-                "Verdict": f"{VERDICT_EMOJI[r['verdict']]} {r['verdict']}",
-                "Confidence": f"{r['confidence']:.0%}",
-                "Temp °C": (
+                t("Trail"): r["name"],
+                t("Grade"): r["difficulty"],
+                t("Verdict"): f"{VERDICT_EMOJI[r['verdict']]} "
+                f"{verdict_label(r['verdict'])}",
+                t("Confidence"): f"{r['confidence']:.0%}",
+                t("Temp °C"): (
                     f"{snap.get('temp_c', 0):.1f}"
                     if snap.get("temp_c") is not None
                     else "—"
                 ),
-                "Wind km/h": (
+                t("Wind km/h"): (
                     f"{snap.get('wind_kmh', 0):.0f}"
                     if snap.get("wind_kmh") is not None
                     else "—"
                 ),
-                "Precip mm": (
+                t("Precip mm"): (
                     f"{snap.get('precip_mm', 0):.1f}"
                     if snap.get("precip_mm") is not None
                     else "—"
                 ),
-                "Snowline m": (
+                t("Snowline m"): (
                     f"{snap.get('snowline_m', 0):.0f}"
                     if snap.get("snowline_m") is not None
                     else "—"
                 ),
-                "Trail max m": r["max_alt_m"],
+                t("Trail max m"): r["max_alt_m"],
             }
         )
     st.dataframe(pd.DataFrame(table), width="stretch", hide_index=True)
 
     st.markdown(
         section_heading(
-            "Open a trail detail page",
-            "Jump from comparison into the full route page for maps, hazards and photos.",
+            t("Open a trail detail page"),
+            t("Jump from comparison into the full route page for maps, hazards and photos."),
         ),
         unsafe_allow_html=True,
     )
@@ -331,9 +334,9 @@ def main() -> None:
 
     st.markdown(
         page_hero(
-            "Compare trails",
-            "Pit two to four routes against each other for the same day, then open the strongest candidate for full route detail.",
-            "Route comparison",
+            t("Compare trails"),
+            t("Pit two to four routes against each other for the same day, then open the strongest candidate for full route detail."),
+            t("Route comparison"),
         ),
         unsafe_allow_html=True,
     )
@@ -345,8 +348,9 @@ def main() -> None:
     # and show a friendly message instead of drawing an empty chart.
     if not (MIN_TRAILS <= len(trail_ids) <= MAX_TRAILS):
         st.info(
-            f"Select between **{MIN_TRAILS}** and **{MAX_TRAILS}** trails to "
-            "compare. Tip: use the search box to filter the dropdown."
+            t("Select between **{min}** and **{max}** trails to compare. "
+              "Tip: use the search box to filter the dropdown.",
+              min=MIN_TRAILS, max=MAX_TRAILS)
         )
         return
 
@@ -392,10 +396,10 @@ def main() -> None:
     st.markdown(
         stat_pills_html(
             [
-                ("selected routes", len(rows)),
-                ("safe", verdict_counts.get("SAFE", 0)),
-                ("borderline", verdict_counts.get("BORDERLINE", 0)),
-                ("avoid", verdict_counts.get("AVOID", 0)),
+                (t("selected routes"), len(rows)),
+                (t("safe"), verdict_counts.get("SAFE", 0)),
+                (t("borderline"), verdict_counts.get("BORDERLINE", 0)),
+                (t("avoid"), verdict_counts.get("AVOID", 0)),
             ]
         ),
         unsafe_allow_html=True,

@@ -40,6 +40,7 @@ from streamlit_folium import st_folium
 from data import db_manager
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_COLOURS, VERDICT_EMOJI
+from utils.i18n import fmt_date, t, verdict_label
 from utils.sidebar import render_shared_sidebar
 from utils.theme import apply_app_theme, page_hero, section_heading
 from utils.topnav import render_top_nav
@@ -152,9 +153,9 @@ def render_header(trail, verdict_data: dict, target_date) -> None:
         f"""
         <div class="trail-hero">
           <span class="verdict-chip" style="--c:{colour};">
-            {emoji} {verdict_data['adjusted']} · {verdict_data['conf']:.0%}
+            {emoji} {verdict_label(verdict_data['adjusted'])} · {verdict_data['conf']:.0%}
             <span class="verdict-chip-sub">
-              {target_date.strftime('%a %d %b')} · {verdict_data['source']}
+              {fmt_date(target_date, 'short')} · {t(verdict_data['source'])}
             </span>
           </span>
           <div class="trail-hero-title">{trail['name']}</div>
@@ -167,19 +168,19 @@ def render_header(trail, verdict_data: dict, target_date) -> None:
           <div class="trail-hero-stats">
             <div>
               <div class="stat-value">{time_est}</div>
-              <div class="stat-label">Estimated time</div>
+              <div class="stat-label">{t("Estimated time")}</div>
             </div>
             <div>
               <div class="stat-value">{ascent} m</div>
-              <div class="stat-label">Ascent</div>
+              <div class="stat-label">{t("Ascent")}</div>
             </div>
             <div>
               <div class="stat-value">{trail['length_km']} km</div>
-              <div class="stat-label">Length</div>
+              <div class="stat-label">{t("Length")}</div>
             </div>
             <div>
               <div class="stat-value">{trail['max_alt_m']} m</div>
-              <div class="stat-label">Max altitude</div>
+              <div class="stat-label">{t("Max altitude")}</div>
             </div>
           </div>
         </div>
@@ -202,20 +203,22 @@ def render_action_bar(trail, target_date) -> date:
 
     with bar_cols[0]:
         chosen = st.date_input(
-            "📅 Date to assess",
+            t("📅 Date to assess"),
             value=target_date,
             min_value=today,
             max_value=today + timedelta(days=FORECAST_HORIZON_DAYS),
             key="trail_detail_date",
-            help=f"Forecasts cover today + the next {FORECAST_HORIZON_DAYS} days.",
+            help=t("Forecasts cover today + the next {n} days.",
+                   n=FORECAST_HORIZON_DAYS),
         )
 
     with bar_cols[1]:
         st.markdown("&nbsp;", unsafe_allow_html=True)  # vertical alignment shim
         if st.button(
-            "🔀 Compare with another trail",
+            t("🔀 Compare with another trail"),
             width="stretch",
-            help=f"Opens Compare with {trail['name']} preselected.",
+            help=t("Opens Compare with {name} preselected.",
+                   name=trail["name"]),
         ):
             # Streamlit pattern - https://docs.streamlit.io
             # Save the current trail and date in session state so the
@@ -228,13 +231,14 @@ def render_action_bar(trail, target_date) -> date:
         st.markdown("&nbsp;", unsafe_allow_html=True)
         st.page_link(
             "pages/1_Find.py",
-            label="Find more hikes",
+            label=t("Find more hikes"),
             icon="🧭",
             width="stretch",
         )
     with bar_cols[3]:
         st.markdown("&nbsp;", unsafe_allow_html=True)
-        st.page_link("pages/2_Map.py", label="Back to map", icon="🗺️", width="stretch")
+        st.page_link("pages/2_Map.py", label=t("Back to map"), icon="🗺️",
+                     width="stretch")
 
     return chosen
 
@@ -249,9 +253,9 @@ def render_action_bar(trail, target_date) -> date:
 def tab_overview(trail, snapshot, verdict, conf, source) -> None:
     st.markdown(
         section_heading(
-            "At a glance",
-            "Core route facts and the cached forecast snapshot for the selected date.",
-            "Overview",
+            t("At a glance"),
+            t("Core route facts and the cached forecast snapshot for the selected date."),
+            t("Overview"),
         ),
         unsafe_allow_html=True,
     )
@@ -259,29 +263,29 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
     # st.metric is the built-in widget for showing a single big number with
     # a small label underneath. It's perfect for headline stats like this.
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Length", f"{trail['length_km']} km")
-    c2.metric("Max altitude", f"{trail['max_alt_m']} m")
+    c1.metric(t("Length"), f"{trail['length_km']} km")
+    c2.metric(t("Max altitude"), f"{trail['max_alt_m']} m")
     c3.metric(
-        "Elevation range",
+        t("Elevation range"),
         f"{trail['max_alt_m'] - trail['min_alt_m']} m",
-        help="Difference between min and max altitude.",
+        help=t("Difference between min and max altitude."),
     )
-    c4.metric("Difficulty (SAC)", trail["difficulty"])
+    c4.metric(t("Difficulty (SAC)"), trail["difficulty"])
 
     # If we don't have weather data for this date in the local database,
     # show a hint to refresh the cache instead of leaving the section blank.
-    st.markdown("#### Snapshot for this date")
+    st.markdown(t("#### Snapshot for this date"))
     if snapshot is None:
         st.info(
-            "No cached weather snapshot for this date. "
-            "Use **🔄 Refresh weather** in the sidebar to fetch one."
+            t("No cached weather snapshot for this date. "
+              "Use **🔄 Refresh weather** in the sidebar to fetch one.")
         )
     else:
         # Four small stat cards in a row: temperature, wind, precipitation,
         # and where the snow line is (the altitude above which snow stays).
         a, b, c, d = st.columns(4)
         a.metric(
-            "🌡️ Temp",
+            t("🌡️ Temp"),
             (
                 f"{snapshot['temp_c']:.0f} °C"
                 if snapshot.get("temp_c") is not None
@@ -289,7 +293,7 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
             ),
         )
         b.metric(
-            "💨 Wind",
+            t("💨 Wind"),
             (
                 f"{snapshot['wind_kmh']:.0f} km/h"
                 if snapshot.get("wind_kmh") is not None
@@ -297,7 +301,7 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
             ),
         )
         c.metric(
-            "☔ Precip",
+            t("☔ Precip"),
             (
                 f"{snapshot['precip_mm']:.1f} mm"
                 if snapshot.get("precip_mm") is not None
@@ -305,7 +309,7 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
             ),
         )
         d.metric(
-            "❄️ Snowline",
+            t("❄️ Snowline"),
             (
                 f"{int(snapshot['snowline_m'])} m"
                 if snapshot.get("snowline_m") is not None
@@ -313,7 +317,8 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
             ),
         )
 
-    st.caption(f"Verdict source: **{source}** · Confidence: **{conf:.0%}**")
+    st.caption(t("Verdict source: **{source}** · Confidence: **{conf}**",
+                 source=t(source), conf=f"{conf:.0%}"))
 
 
 # Route map tab. Shows a topographic map with a fake loop drawn on top
@@ -322,17 +327,17 @@ def tab_overview(trail, snapshot, verdict, conf, source) -> None:
 def tab_route(trail, snapshot) -> None:
     st.markdown(
         section_heading(
-            "Route on the map",
-            "Approximate loop geometry with route context and hazard markers.",
-            "Map",
+            t("Route on the map"),
+            t("Approximate loop geometry with route context and hazard markers."),
+            t("Map"),
         ),
         unsafe_allow_html=True,
     )
     st.caption(
-        "Note: detailed GPX traces aren't bundled with the seeded trails, so "
-        "the loop drawn here is **approximate** — a circle centred on the "
-        "official start point with the same total length. Use it for "
-        "orientation, not navigation."
+        t("Note: detailed GPX traces aren't bundled with the seeded trails, "
+          "so the loop drawn here is **approximate** — a circle centred on "
+          "the official start point with the same total length. Use it for "
+          "orientation, not navigation.")
     )
 
     # Build a fake circular loop centered on the trail's start point. We
@@ -359,12 +364,12 @@ def tab_route(trail, snapshot) -> None:
         color="#1f7ae0",
         weight=5,
         opacity=0.95,
-        tooltip=f"≈{trail['length_km']} km loop",
+        tooltip=t("≈{km} km loop", km=trail["length_km"]),
     ).add_to(fmap)
     # Drop a green "play" pin at the trail's official start point.
     folium.Marker(
         [trail["lat"], trail["lon"]],
-        tooltip=f"Start · {trail['name']}",
+        tooltip=t("Start · {name}", name=trail["name"]),
         icon=folium.Icon(color="green", icon="play", prefix="fa"),
     ).add_to(fmap)
 
@@ -373,7 +378,7 @@ def tab_route(trail, snapshot) -> None:
     half = pts[len(pts) // 2]
     folium.Marker(
         [half[0], half[1]],
-        tooltip=f"Summit · approx. {trail['max_alt_m']} m",
+        tooltip=t("Summit · approx. {alt} m", alt=trail["max_alt_m"]),
         icon=folium.Icon(color="darkblue", icon="flag", prefix="fa"),
     ).add_to(fmap)
 
@@ -402,9 +407,9 @@ def tab_route(trail, snapshot) -> None:
     if hazards:
         st.markdown(
             "<div style='font-size:0.85rem; color:#6b7177; margin:6px 0 8px;'>"
-            "🟡 = caution · 🔴 = serious hazard. Hover any diamond on the map "
-            "for details."
-            "</div>",
+            + t("🟡 = caution · 🔴 = serious hazard. Hover any diamond on "
+                "the map for details.")
+            + "</div>",
             unsafe_allow_html=True,
         )
 
@@ -418,7 +423,7 @@ def tab_route(trail, snapshot) -> None:
     # elevation data along the route, we fake it: climb from min altitude
     # up to the trail's max altitude, then back down. 30 sample points is
     # smooth enough for a chart but cheap to compute.
-    st.markdown("#### ⛰️ Elevation profile")
+    st.markdown(t("#### ⛰️ Elevation profile"))
     n = 30
     half_n = n // 2
     xs = list(range(n + 1))
@@ -447,7 +452,7 @@ def tab_route(trail, snapshot) -> None:
             line=dict(color="#1E7B3A", width=3),
             fill="tozeroy",
             fillcolor="rgba(30, 123, 58, 0.15)",
-            name="Elevation",
+            name=t("Elevation"),
         )
     )
     if snowline:
@@ -455,14 +460,14 @@ def tab_route(trail, snapshot) -> None:
             y=snowline,
             line_dash="dash",
             line_color="#3a7bd5",
-            annotation_text=f"Snowline · {int(snowline)} m",
+            annotation_text=t("Snowline · {alt} m", alt=int(snowline)),
             annotation_position="top right",
         )
     fig.update_layout(
         height=320,
         margin=dict(l=10, r=10, t=10, b=10),
-        xaxis_title="Distance (km)",
-        yaxis_title="Altitude (m)",
+        xaxis_title=t("Distance (km)"),
+        yaxis_title=t("Altitude (m)"),
         showlegend=False,
     )
     st.plotly_chart(fig, width="stretch")
@@ -473,9 +478,9 @@ def tab_route(trail, snapshot) -> None:
 def tab_tricky(trail, snapshot) -> None:
     st.markdown(
         section_heading(
-            "Tricky parts and what to pack",
-            "Terrain, weather and logistics notes generated from route grade and forecast conditions.",
-            "Safety notes",
+            t("Tricky parts and what to pack"),
+            t("Terrain, weather and logistics notes generated from route grade and forecast conditions."),
+            t("Safety notes"),
         ),
         unsafe_allow_html=True,
     )
@@ -506,7 +511,7 @@ def _altitude_card(label: str, alt_m: int, projected: dict | None) -> str:
         return (
             f"<div class='alt-card'>"
             f"<h5>{label} · {alt_m} m</h5>"
-            f"<div class='alt-row'>No forecast cached for this day.</div>"
+            f"<div class='alt-row'>{t('No forecast cached for this day.')}</div>"
             f"</div>"
         )
     temp = projected.get("temp_c")
@@ -518,16 +523,17 @@ def _altitude_card(label: str, alt_m: int, projected: dict | None) -> str:
     # data for (so a missing wind reading doesn't print "None km/h").
     rows = []
     if wind is not None:
-        rows.append(f"💨 {wind:.0f} km/h wind")
+        rows.append(t("💨 {wind} km/h wind", wind=f"{wind:.0f}"))
     if precip is not None:
-        rows.append(f"☔ {precip:.1f} mm precip")
+        rows.append(t("☔ {precip} mm precip", precip=f"{precip:.1f}"))
     if snowline is not None:
         # Compare the snowline to this card's altitude. If the snowline is
         # higher than the hiker, snow is "above" them. If lower, snow is
         # already where they'll be walking, which is more risky.
         margin = int(snowline) - alt_m
-        marker = "above" if margin >= 0 else "below"
-        rows.append(f"❄️ snowline {abs(margin)} m {marker} you")
+        marker = t("above") if margin >= 0 else t("below")
+        rows.append(t("❄️ snowline {margin} m {marker} you",
+                      margin=abs(margin), marker=marker))
 
     rows_html = "".join(f"<div class='alt-row'>{r}</div>" for r in rows)
     temp_str = f"{temp:.0f}°C" if temp is not None else "—"
@@ -592,26 +598,27 @@ def _render_best_day(df, trail, risk: int) -> None:
     best_date, best_v, best_c, _ = scored[0]
     if best_v == "SAFE":
         st.success(
-            f"🌟 **Best day to go:** {best_date.strftime('%A %d %B')} — "
-            f"{best_v} ({best_c:.0%} confidence)."
+            t("🌟 **Best day to go:** {d} — {verdict} ({conf} confidence).",
+              d=fmt_date(best_date, "long"),
+              verdict=verdict_label(best_v),
+              conf=f"{best_c:.0%}")
         )
     elif best_v == "BORDERLINE":
         msg = (
-            (
-                f" Note: {grade} routes are never marked SAFE; this is the best "
-                "*weather*, not a safety endorsement."
-            )
+            t(" Note: {grade} routes are never marked SAFE; this is the "
+              "best *weather*, not a safety endorsement.", grade=grade)
             if is_hard
-            else " Consider rescheduling if you can."
+            else t(" Consider rescheduling if you can.")
         )
         st.warning(
-            f"🌗 **Best window this week:** {best_date.strftime('%A %d %B')} — "
-            f"BORDERLINE.{msg}"
+            t("🌗 **Best window this week:** {d} — BORDERLINE.{msg}",
+              d=fmt_date(best_date, "long"), msg=msg)
         )
     else:
         st.error(
-            f"⛔ No safe day in the next 7. Earliest watchable day: "
-            f"{best_date.strftime('%A %d %B')} ({best_v})."
+            t("⛔ No safe day in the next 7. Earliest watchable day: {d} "
+              "({verdict}).",
+              d=fmt_date(best_date, "long"), verdict=verdict_label(best_v))
         )
 
 
@@ -619,9 +626,9 @@ def _render_best_day(df, trail, risk: int) -> None:
 # verdict color as its background. The day currently shown in the date
 # picker gets a blue outline so the user can locate it at a glance.
 def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
-    st.markdown("##### Daily verdicts (next 7 days)")
+    st.markdown(t("##### Daily verdicts (next 7 days)"))
     if df.empty:
-        st.info("Refresh the cache to populate the 7-day forecast.")
+        st.info(t("Refresh the cache to populate the 7-day forecast."))
         return
     # Streamlit pattern - https://docs.streamlit.io
     # Create one column per day and drop a colored HTML card into each.
@@ -651,12 +658,12 @@ def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
                 <div style="background:{colour}; color:white; padding:12px 8px;
                             border-radius:10px; text-align:center; {ring}">
                   <div style="font-size:0.78rem; opacity:0.9;">
-                    {row.snapshot_date.strftime('%a %d %b')}
+                    {fmt_date(row.snapshot_date, 'short')}
                   </div>
                   <div style="font-size:1.4rem; line-height:1;">
                     {VERDICT_EMOJI[adjusted]}
                   </div>
-                  <div style="font-weight:700; font-size:0.88rem;">{adjusted}</div>
+                  <div style="font-weight:700; font-size:0.88rem;">{verdict_label(adjusted)}</div>
                   <div style="font-size:0.72rem; opacity:0.85;">
                     {row.temp_c:.0f}°C · {row.wind_kmh:.0f} km/h
                   </div>
@@ -664,7 +671,7 @@ def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
                 """,
                 unsafe_allow_html=True,
             )
-    st.caption("Day with a blue outline = the date you're currently viewing above.")
+    st.caption(t("Day with a blue outline = the date you're currently viewing above."))
 
 
 # Adapted from Plotly Python docs - https://plotly.com/python/
@@ -674,7 +681,8 @@ def _render_seven_day_cards(df, trail, risk: int, target_date) -> None:
 def _render_timeline_chart(df) -> None:
     if df.empty:
         return
-    with st.expander("📈 7-day timeline (temperature · wind · precip)", expanded=False):
+    with st.expander(t("📈 7-day timeline (temperature · wind · precip)"),
+                     expanded=False):
         # make_subplots with secondary_y=True is the Plotly trick to put
         # two different y-axes (left and right) on the same chart. We
         # need this because temperature uses degrees but wind uses km/h.
@@ -684,7 +692,7 @@ def _render_timeline_chart(df) -> None:
                 x=df["snapshot_date"],
                 y=df["temp_c"],
                 mode="lines+markers",
-                name="Temp (°C)",
+                name=t("Temp (°C)"),
                 line=dict(color="#C0392B", width=3),
             ),
             secondary_y=False,
@@ -694,7 +702,7 @@ def _render_timeline_chart(df) -> None:
                 x=df["snapshot_date"],
                 y=df["wind_kmh"],
                 mode="lines+markers",
-                name="Wind (km/h)",
+                name=t("Wind (km/h)"),
                 line=dict(color="#3a7bd5", width=3, dash="dot"),
             ),
             secondary_y=True,
@@ -703,7 +711,7 @@ def _render_timeline_chart(df) -> None:
             go.Bar(
                 x=df["snapshot_date"],
                 y=df["precip_mm"],
-                name="Precip (mm)",
+                name=t("Precip (mm)"),
                 opacity=0.55,
                 marker_color="#1E7B3A",
             ),
@@ -715,8 +723,9 @@ def _render_timeline_chart(df) -> None:
             legend=dict(orientation="h", y=-0.2),
             hovermode="x unified",
         )
-        fig.update_yaxes(title_text="Temperature (°C)", secondary_y=False)
-        fig.update_yaxes(title_text="Wind (km/h) · Precip (mm)", secondary_y=True)
+        fig.update_yaxes(title_text=t("Temperature (°C)"), secondary_y=False)
+        fig.update_yaxes(title_text=t("Wind (km/h) · Precip (mm)"),
+                         secondary_y=True)
         st.plotly_chart(fig, width="stretch")
 
 
@@ -727,9 +736,10 @@ def _render_timeline_chart(df) -> None:
 def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
     st.markdown(
         section_heading(
-            f"Why is it considered {adjusted or '—'}?",
-            "The same verdict logic is broken down into readable weather and terrain signals.",
-            "Forecast explanation",
+            t("Why is it considered {verdict}?",
+              verdict=verdict_label(adjusted or "—")),
+            t("The same verdict logic is broken down into readable weather and terrain signals."),
+            t("Forecast explanation"),
         ),
         unsafe_allow_html=True,
     )
@@ -745,11 +755,11 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
     # single point. To give the user a feel for what it's like at the
     # bottom and top of the climb, we estimate both using the standard
     # lapse rate (air gets 6.5 degrees cooler per 1000 m of climb).
-    st.markdown("##### Top vs. bottom weather")
+    st.markdown(t("##### Top vs. bottom weather"))
     st.caption(
-        "Forecasts are reported at one point. We project them to the trail's "
-        "min and max altitudes using the standard lapse rate "
-        "(−6.5 °C / 1000 m of climb). Treat as a guide, not a guarantee."
+        t("Forecasts are reported at one point. We project them to the "
+          "trail's min and max altitudes using the standard lapse rate "
+          "(−6.5 °C / 1000 m of climb). Treat as a guide, not a guarantee.")
     )
     bottom_proj = weather_at_altitude(
         snapshot, trail["min_alt_m"], reference_alt_m=trail["min_alt_m"]
@@ -759,30 +769,31 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
     )
     col_top, col_bot = st.columns(2)
     col_top.markdown(
-        _altitude_card("⛰️ Top of the trail", trail["max_alt_m"], top_proj),
+        _altitude_card(t("⛰️ Top of the trail"), trail["max_alt_m"], top_proj),
         unsafe_allow_html=True,
     )
     col_bot.markdown(
-        _altitude_card("🌲 Bottom of the trail", trail["min_alt_m"], bottom_proj),
+        _altitude_card(t("🌲 Bottom of the trail"), trail["min_alt_m"],
+                       bottom_proj),
         unsafe_allow_html=True,
     )
 
     with st.container(border=True):
-        st.markdown("##### Top reasons")
+        st.markdown(t("##### Top reasons"))
         for b in interp["bullets"]:
             st.markdown(f"- {b}")
 
     # A two-column grid of small bordered cards. One card per weather
     # indicator (temperature, wind, precip, cloud, snowline). Each card
     # shows a number plus a written takeaway in plain English.
-    st.markdown("##### Per-indicator breakdown")
+    st.markdown(t("##### Per-indicator breakdown"))
     grid = st.columns(2)
     items = [
-        ("🌡️ Temperature", interp["temp"]),
-        ("💨 Wind", interp["wind"]),
-        ("☔ Precipitation", interp["precip"]),
-        ("☁️ Cloud cover", interp["cloud"]),
-        ("❄️ Snowline vs. trail max", interp["snow"]),
+        (t("🌡️ Temperature"), interp["temp"]),
+        (t("💨 Wind"), interp["wind"]),
+        (t("☔ Precipitation"), interp["precip"]),
+        (t("☁️ Cloud cover"), interp["cloud"]),
+        (t("❄️ Snowline vs. trail max"), interp["snow"]),
     ]
     for i, (label, body) in enumerate(items):
         if not body:
@@ -795,15 +806,15 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
     st.divider()
     st.markdown(
         section_heading(
-            "The whole week at a glance",
-            "Use the seven-day outlook to find a better window if today looks mixed.",
-            "Forecast window",
+            t("The whole week at a glance"),
+            t("Use the seven-day outlook to find a better window if today looks mixed."),
+            t("Forecast window"),
         ),
         unsafe_allow_html=True,
     )
     st.caption(
-        "Use this to find the best day to go — verdicts here use the same "
-        "safety logic as the headline above."
+        t("Use this to find the best day to go — verdicts here use the same "
+          "safety logic as the headline above.")
     )
     # We compute the 7-day forecast dataframe once and pass it to three
     # different renderers. This way we don't query the database three
@@ -820,32 +831,33 @@ def tab_weather(trail, snapshot, verdict, adjusted, target_date, risk) -> None:
 def tab_photos(trail) -> None:
     st.markdown(
         section_heading(
-            "Pictures of the route",
-            "Free-licensed Wikimedia Commons images for visual context.",
-            "Photos",
+            t("Pictures of the route"),
+            t("Free-licensed Wikimedia Commons images for visual context."),
+            t("Photos"),
         ),
         unsafe_allow_html=True,
     )
     # First we try a more specific search ("trail name canton hiking") so
     # we get photos of the actual area. If that returns nothing, we fall
-    # back to just the trail name as a broader query.
+    # back to just the trail name as a broader query. The query stays in
+    # English because Wikimedia Commons indexes most photos that way.
     query = f"{trail['name']} {trail['canton']} hiking"
-    with st.spinner("Searching Wikimedia Commons…"):
+    with st.spinner(t("Searching Wikimedia Commons…")):
         images = fetch_trail_images(query, limit=4)
         if not images:
             images = fetch_trail_images(trail["name"], limit=4)
 
     if not images:
         st.info(
-            f"No Commons photos found for *{trail['name']}*. "
-            "Try clicking the trail name on Wikipedia for context, or "
-            "submit your own via the report form below."
+            t("No Commons photos found for *{name}*. Try clicking the trail "
+              "name on Wikipedia for context, or submit your own via the "
+              "report form below.", name=trail["name"])
         )
         return
 
     st.caption(
-        "Photos pulled from Wikimedia Commons — click any image to see "
-        "the original, photographer, and licence terms."
+        t("Photos pulled from Wikimedia Commons — click any image to see "
+          "the original, photographer, and licence terms.")
     )
     # Two-column photo gallery. If for some reason an image URL fails to
     # load, we still show a clickable link to its Wikimedia page so the
@@ -859,7 +871,7 @@ def tab_photos(trail) -> None:
                 st.write(f"[{img['title']}]({img['page']})")
             st.markdown(
                 f"<div style='font-size:0.8rem; opacity:0.7;'>"
-                f"<a href='{img['page']}' target='_blank'>source ↗</a>"
+                f"<a href='{img['page']}' target='_blank'>{t('source ↗')}</a>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -879,9 +891,9 @@ def render_report_form(trail) -> None:
     st.divider()
     st.markdown(
         section_heading(
-            f"Hiked {trail['name']}? Submit a report",
-            "Your report becomes ground truth on the next model retrain and helps verdicts improve.",
-            "Community signal",
+            t("Hiked {name}? Submit a report", name=trail["name"]),
+            t("Your report becomes ground truth on the next model retrain and helps verdicts improve."),
+            t("Community signal"),
         ),
         unsafe_allow_html=True,
     )
@@ -892,20 +904,24 @@ def render_report_form(trail) -> None:
     with st.form(f"user_report_form_{trail['id']}", clear_on_submit=True):
         c1, c2 = st.columns([1, 1])
         with c1:
-            report_date = st.date_input("Date hiked", value=date.today())
+            report_date = st.date_input(t("Date hiked"), value=date.today())
+            # The radio keeps English option values (the database stores
+            # them) but shows localised labels via format_func.
             label = st.radio(
-                "Conditions you found",
+                t("Conditions you found"),
                 ["SAFE", "BORDERLINE", "AVOID"],
                 horizontal=True,
+                format_func=verdict_label,
             )
         with c2:
             comment = st.text_area(
-                "What was it like?",
+                t("What was it like?"),
                 "",
                 max_chars=300,
-                placeholder="e.g. 'Section above 2300 m had verglas — needed crampons.'",
+                placeholder=t("e.g. 'Section above 2300 m had verglas — "
+                              "needed crampons.'"),
             )
-        submitted = st.form_submit_button("Submit report", type="primary")
+        submitted = st.form_submit_button(t("Submit report"), type="primary")
         if submitted:
             db_manager.insert_user_report(
                 trail_id=trail["id"],
@@ -913,7 +929,8 @@ def render_report_form(trail) -> None:
                 user_label=label,
                 comment=comment.strip(),
             )
-            st.success(f"Report saved for {trail['name']}. Thank you 🙏")
+            st.success(t("Report saved for {name}. Thank you 🙏",
+                          name=trail["name"]))
 
 
 # ---------------------------------------------------------------------------
@@ -943,24 +960,26 @@ def main() -> None:
     if trail_id is None:
         st.markdown(
             page_hero(
-                "Trail detail",
-                "Choose a route from Find or Map to see forecast interpretation, route context, hazards and photos.",
-                "Route intelligence",
+                t("Trail detail"),
+                t("Choose a route from Find or Map to see forecast interpretation, route context, hazards and photos."),
+                t("Route intelligence"),
             ),
             unsafe_allow_html=True,
         )
         st.warning(
-            "No trail selected yet. Open **🧭 Find a hike** for a quiz-based "
-            "ranking, or **🗺️ Map** to browse all trails visually."
+            t("No trail selected yet. Open **🧭 Find a hike** for a "
+              "quiz-based ranking, or **🗺️ Map** to browse all trails "
+              "visually.")
         )
         c1, c2 = st.columns(2)
-        c1.page_link("pages/1_Find.py", label="Go to Find a hike", icon="🧭")
-        c2.page_link("pages/2_Map.py", label="Browse the map", icon="🗺️")
+        c1.page_link("pages/1_Find.py", label=t("Go to Find a hike"),
+                     icon="🧭")
+        c2.page_link("pages/2_Map.py", label=t("Browse the map"), icon="🗺️")
         return
 
     trail = db_manager.get_trail(trail_id)
     if trail is None:
-        st.error(f"Trail #{trail_id} not found in the database.")
+        st.error(t("Trail #{id} not found in the database.", id=trail_id))
         return
 
     # If the user arrived from another page with a date selected, use that.
@@ -1007,7 +1026,7 @@ def main() -> None:
     # T6 route gets bumped down because the terrain is intrinsically
     # dangerous), we show the reason as a yellow warning under the hero.
     for c in caveats:
-        st.warning(f"⚠️ **Safety lock:** {c}")
+        st.warning(t("⚠️ **Safety lock:** {caveat}", caveat=c))
 
     # If the user picked a different date in the action bar, save the new
     # date in session state and rerun the page so the whole layout updates
@@ -1021,7 +1040,8 @@ def main() -> None:
     # The five tabs hold all the deep content for this trail. The user
     # can click between them without reloading the page.
     overview, route, weather, tricky, photos = st.tabs(
-        ["Overview", "Route map", "Weather", "Tricky parts", "Photos"]
+        [t("Overview"), t("Route map"), t("Weather"), t("Tricky parts"),
+         t("Photos")]
     )
     with overview:
         tab_overview(trail, snapshot, verdict, conf, source)

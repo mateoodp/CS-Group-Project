@@ -25,6 +25,7 @@ from utils.constants import (
     APP_TITLE,
     FEATURE_DISPLAY_NAMES,
 )
+from utils.i18n import block, t
 from utils.sidebar import render_shared_sidebar
 from utils.theme import apply_app_theme, page_hero, section_heading, stat_pills_html
 from utils.topnav import render_top_nav
@@ -50,35 +51,13 @@ st.set_page_config(
 def render_problem_statement() -> None:
     st.markdown(
         section_heading(
-            "Why this tool exists",
-            "Raw weather numbers are useful, but hikers also need a quick answer about whether a given trail is a good idea today.",
-            "Problem",
+            t("Why this tool exists"),
+            t("Raw weather numbers are useful, but hikers also need a quick answer about whether a given trail is a good idea today."),
+            t("Problem"),
         ),
         unsafe_allow_html=True,
     )
-    st.markdown(
-        """
-        Hiking in the Swiss Alps is one of the best things you can do in
-        summer, but it can also be dangerous. Around **20 people die every
-        year** on Swiss alpine trails, and many more get injured. Most of
-        these accidents happen because hikers did not realise how risky
-        the conditions on a specific trail would actually be on that day.
-
-        The weather apps people normally use (like MeteoSwiss or SRF Meteo)
-        show numbers such as temperature, wind speed, or chance of rain.
-        That information is useful, but it does not directly answer the
-        question every hiker is really asking: "is this trail a good idea
-        today?" The Swiss Alpine Club publishes avalanche warnings, but
-        again not at the level of an individual hike.
-
-        Our app tries to close that gap. You pick a trail and a date, and
-        you get one clear answer: **SAFE**, **BORDERLINE**, or **AVOID**.
-        The answer comes with a short explanation of the main reasons
-        (for example "wind is too strong" or "the trail is above the snow
-        line that day"), so you can decide for yourself whether to go,
-        change your plans, or wait for better weather.
-        """
-    )
+    st.markdown(block("about_problem_body"))
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +72,9 @@ def render_problem_statement() -> None:
 def render_setup_section() -> None:
     st.markdown(
         section_heading(
-            "Initial setup",
-            "Seed historical weather and retrain the model when the local cache needs rebuilding.",
-            "Model operations",
+            t("Initial setup"),
+            t("Seed historical weather and retrain the model when the local cache needs rebuilding."),
+            t("Model operations"),
         ),
         unsafe_allow_html=True,
     )
@@ -104,9 +83,9 @@ def render_setup_section() -> None:
     st.markdown(
         stat_pills_html(
             [
-                ("weather rows in DB", f"{n_weather:,}"),
-                ("trails seeded", len(db_manager.get_all_trails())),
-                ("model file", "trained" if has_model else "not yet"),
+                (t("weather rows in DB"), f"{n_weather:,}"),
+                (t("trails seeded"), len(db_manager.get_all_trails())),
+                (t("model file"), t("trained") if has_model else t("not yet")),
             ]
         ),
         unsafe_allow_html=True,
@@ -117,26 +96,29 @@ def render_setup_section() -> None:
     # the ML model from whatever weather data is currently in the database.
     seed_col, train_col = st.columns(2)
     with seed_col:
-        years = st.slider("Years of history to fetch", 1, 2, 1, key="seed_years")
-        if st.button("⬇️ Seed historical weather (all trails)", width="stretch"):
+        years = st.slider(t("Years of history to fetch"), 1, 2, 1,
+                          key="seed_years")
+        if st.button(t("⬇️ Seed historical weather (all trails)"),
+                     width="stretch"):
             # Loop through every trail one by one, ask the Open-Meteo
             # archive for that location's past weather, and save it into
             # the local SQLite database. The progress bar gives the user
             # something to watch since this can take a while.
             trails = db_manager.get_all_trails()
-            progress = st.progress(0.0, text="Fetching archive…")
+            progress = st.progress(0.0, text=t("Fetching archive…"))
             errors: list[str] = []
-            for i, t in enumerate(trails):
+            for i, trail in enumerate(trails):
                 try:
                     # Open-Meteo Historical Archive - https://open-meteo.com/en/docs/historical-weather-api
                     weather_fetcher.seed_historical_weather(
-                        t["id"], t["lat"], t["lon"], years=years
+                        trail["id"], trail["lat"], trail["lon"], years=years
                     )
                 except Exception as e:
-                    errors.append(f"{t['name']}: {e}")
+                    errors.append(f"{trail['name']}: {e}")
                 progress.progress(
                     (i + 1) / len(trails),
-                    text=f"Fetching archive… {t['name']} ({i+1}/{len(trails)})",
+                    text=t("Fetching archive… {name} ({i}/{total})",
+                           name=trail["name"], i=i + 1, total=len(trails)),
                 )
                 # Open-Meteo's free archive endpoint caps at ~600 requests
                 # per minute. Pacing each call by ~0.15s keeps us safely
@@ -145,30 +127,32 @@ def render_setup_section() -> None:
             progress.empty()
             if errors:
                 st.warning(
-                    f"Done with {len(errors)} errors:\n\n" + "\n".join(errors[:5])
+                    t("Done with {n} errors:", n=len(errors))
+                    + "\n\n" + "\n".join(errors[:5])
                 )
             else:
-                st.success("Historical weather seeded for all trails.")
+                st.success(t("Historical weather seeded for all trails."))
 
     with train_col:
-        if st.button("🧠 Retrain model", type="primary", width="stretch"):
+        if st.button(t("🧠 Retrain model"), type="primary", width="stretch"):
             try:
                 # Adapted from scikit-learn docs - https://scikit-learn.org/stable/
                 # Train a new Random Forest using whatever weather data is
                 # currently in the database. The spinner tells the user
                 # something is happening so they don't think the app froze.
-                with st.spinner("Training Random Forest…"):
+                with st.spinner(t("Training Random Forest…")):
                     metrics = trail_classifier.retrain_from_db()
                 # Save the training metrics into session state so the
                 # render_metrics() function below can pick them up and
                 # show them in the dashboard.
                 st.session_state["last_metrics"] = metrics
                 st.success(
-                    f"Trained! Accuracy: {metrics['accuracy']:.1%} "
-                    f"on {metrics['n_samples']:,} rows."
+                    t("Trained! Accuracy: {acc} on {n} rows.",
+                      acc=f"{metrics['accuracy']:.1%}",
+                      n=f"{metrics['n_samples']:,}")
                 )
             except Exception as e:
-                st.error(f"Retrain failed: {e}")
+                st.error(t("Retrain failed: {err}", err=e))
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +168,9 @@ def render_setup_section() -> None:
 def render_metrics() -> None:
     st.markdown(
         section_heading(
-            "Model performance",
-            "Training metrics appear after retraining from the current local database.",
-            "Evaluation",
+            t("Model performance"),
+            t("Training metrics appear after retraining from the current local database."),
+            t("Evaluation"),
         ),
         unsafe_allow_html=True,
     )
@@ -194,17 +178,17 @@ def render_metrics() -> None:
 
     if metrics is None:
         st.info(
-            "Metrics will appear here after the first retrain. "
-            "Click **Retrain model** above."
+            t("Metrics will appear here after the first retrain. "
+              "Click **Retrain model** above.")
         )
         return
 
     st.markdown(
         stat_pills_html(
             [
-                ("accuracy", f"{metrics['accuracy']:.1%}"),
-                ("rows trained", f"{metrics['n_samples']:,}"),
-                ("model version", metrics["model_version"]),
+                (t("accuracy"), f"{metrics['accuracy']:.1%}"),
+                (t("rows trained"), f"{metrics['n_samples']:,}"),
+                (t("model version"), metrics["model_version"]),
             ]
         ),
         unsafe_allow_html=True,
@@ -224,16 +208,16 @@ def render_metrics() -> None:
             colorscale="Greens",
             text=cm,
             texttemplate="%{text}",
-            colorbar=dict(title="Count"),
+            colorbar=dict(title=t("Count")),
         )
     )
     fig.update_layout(
-        title="Confusion matrix",
+        title=t("Confusion matrix"),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         height=380,
-        xaxis_title="Predicted",
-        yaxis_title="Actual",
+        xaxis_title=t("Predicted"),
+        yaxis_title=t("Actual"),
         margin=dict(l=10, r=10, t=40, b=10),
     )
     st.plotly_chart(fig, width="stretch")
@@ -242,14 +226,14 @@ def render_metrics() -> None:
     # This is sklearn's standard "classification report". For each class
     # (SAFE, BORDERLINE, AVOID) it gives precision, recall and F1 score.
     # We render it as a plain dataframe so it's easy to read.
-    st.subheader("Classification report")
+    st.subheader(t("Classification report"))
     rep = pd.DataFrame(metrics["classification_report"]).T
     st.dataframe(rep.round(3), width="stretch")
 
     # Adapted from Plotly Python docs - https://plotly.com/python/
     # Bar chart showing which features the Random Forest leaned on the most.
     # We sort ascending so the longest (most important) bar sits at the top.
-    st.subheader("Feature importance")
+    st.subheader(t("Feature importance"))
     imp_df = pd.DataFrame(
         metrics["feature_importances"], columns=["Feature", "Importance"]
     )
@@ -262,6 +246,7 @@ def render_metrics() -> None:
         orientation="h",
         color="Importance",
         color_continuous_scale="Greens",
+        labels={"Importance": t("Importance"), "Feature": t("Feature")},
     )
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10))
     st.plotly_chart(fig2, width="stretch")
@@ -277,19 +262,13 @@ def render_metrics() -> None:
 def render_attribution() -> None:
     st.markdown(
         section_heading(
-            "Data sources",
-            "Free public APIs and local seeded data power the app.",
-            "Attribution",
+            t("Data sources"),
+            t("Free public APIs and local seeded data power the app."),
+            t("Attribution"),
         ),
         unsafe_allow_html=True,
     )
-    st.markdown(
-        """
-        - **[Open-Meteo Forecast](https://open-meteo.com/en/docs)**: current and 7-day forecast, free, no key.
-        - **[Open-Meteo Historical Archive](https://open-meteo.com/en/docs/historical-weather-api)**: up to two years of past weather, free, no key.
-        - **[Swisstopo GeoAdmin](https://docs.geo.admin.ch/access-data/identify-features.html)**: Swiss federal geodata for trail elevation lookups, free, no key.
-        """
-    )
+    st.markdown(block("about_attribution_body"))
 
 
 # ---------------------------------------------------------------------------
@@ -306,9 +285,9 @@ def main() -> None:
     apply_app_theme()
     st.markdown(
         page_hero(
-            "About this app",
-            "Swiss Alpine Hiking Condition Forecaster combines trail catalogue data, weather caches and a trained model into route-level condition guidance.",
-            "Project and model",
+            t("About this app"),
+            t("Swiss Alpine Hiking Condition Forecaster combines trail catalogue data, weather caches and a trained model into route-level condition guidance."),
+            t("Project and model"),
         ),
         unsafe_allow_html=True,
     )

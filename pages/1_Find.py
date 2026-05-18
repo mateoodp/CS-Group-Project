@@ -29,6 +29,7 @@ import streamlit as st
 from data import db_manager, weather_fetcher
 from utils import predictions
 from utils.constants import APP_TITLE, VERDICT_EMOJI
+from utils.i18n import fmt_date, t, verdict_label
 from utils.sidebar import render_shared_sidebar
 from utils.theme import (
     apply_app_theme,
@@ -60,9 +61,9 @@ def render_quiz(meta: dict) -> dict | None:
     """Render the 5-question quiz + date picker. Return answers on submit."""
     st.markdown(
         section_heading(
-            "Tune your trail day",
-            "Filter by region, grade, distance and altitude. The ranking still uses the same forecast and model logic underneath.",
-            "Personalized search",
+            t("Tune your trail day"),
+            t("Filter by region, grade, distance and altitude. The ranking still uses the same forecast and model logic underneath."),
+            t("Personalized search"),
         ),
         unsafe_allow_html=True,
     )
@@ -79,29 +80,29 @@ def render_quiz(meta: dict) -> dict | None:
         c1, c2 = st.columns(2)
         with c1:
             cantons = st.multiselect(
-                "Cantons",
+                t("Cantons"),
                 options=meta["cantons"],
-                placeholder="Any canton",
-                help="Leave empty to search all Swiss cantons.",
+                placeholder=t("Any canton"),
+                help=t("Leave empty to search all Swiss cantons."),
                 key=f"quiz_cantons_{v}",
             )
             regions = st.multiselect(
-                "Regions",
+                t("Regions"),
                 options=meta["regions"],
-                placeholder="Any region",
-                help="Alps · Pre-Alps · Jura · Mittelland. Empty = all.",
+                placeholder=t("Any region"),
+                help=t("Alps · Pre-Alps · Jura · Mittelland. Empty = all."),
                 key=f"quiz_regions_{v}",
             )
             difficulties = st.multiselect(
-                "SAC grade",
+                t("SAC grade"),
                 options=meta["difficulties"],
-                placeholder="Any grade",
-                help="T1 = strolling · T6 = serious alpine. Empty = all.",
+                placeholder=t("Any grade"),
+                help=t("T1 = strolling · T6 = serious alpine. Empty = all."),
                 key=f"quiz_difficulties_{v}",
             )
         with c2:
             length_lo, length_hi = st.slider(
-                "Distance",
+                t("Distance"),
                 min_value=float(int(meta["min_length_km"])),
                 max_value=float(int(meta["max_length_km"]) + 1),
                 value=(
@@ -110,30 +111,34 @@ def render_quiz(meta: dict) -> dict | None:
                 ),
                 step=0.5,
                 key=f"quiz_length_{v}",
-                help="Route length in kilometres.",
+                help=t("Route length in kilometres."),
             )
             alt_lo, alt_hi = st.slider(
-                "Highest point",
+                t("Highest point"),
                 min_value=int(meta["min_max_alt_m"]),
                 max_value=int(meta["max_max_alt_m"]),
                 value=(int(meta["min_max_alt_m"]), int(meta["max_max_alt_m"])),
                 step=50,
                 key=f"quiz_alt_{v}",
-                help="Maximum altitude reached by the trail.",
+                help=t("Maximum altitude reached by the trail."),
             )
+            # The radio shows translated labels but we keep the English
+            # option values so the comparison below ("== Today") still works.
             mode = st.radio(
-                "Date window",
+                t("Date window"),
                 ["Today", "Pick a date"],
                 horizontal=True,
-                help=f"Forecasts cover today + the next {FORECAST_HORIZON_DAYS} days.",
+                format_func=t,
+                help=t("Forecasts cover today + the next {n} days.",
+                       n=FORECAST_HORIZON_DAYS),
                 key=f"quiz_mode_{v}",
             )
             if mode == "Today":
                 chosen_date = today
-                st.caption(f"📅 {today.strftime('%A %d %B %Y')}")
+                st.caption(f"📅 {fmt_date(today, 'full')}")
             else:
                 chosen_date = st.date_input(
-                    "Date",
+                    t("Date"),
                     value=today,
                     min_value=today,
                     max_value=today + timedelta(days=FORECAST_HORIZON_DAYS),
@@ -141,7 +146,7 @@ def render_quiz(meta: dict) -> dict | None:
                 )
 
         submitted = st.button(
-            "🧭 Find my best hikes", type="primary", use_container_width=True
+            t("🧭 Find my best hikes"), type="primary", use_container_width=True
         )
 
     if not submitted:
@@ -267,17 +272,22 @@ def _score_all_parallel(candidates, target_date: date, risk: int) -> list[dict]:
     # the Open-Meteo API to respond (not heavy Python work).
     results: list[dict] = []
     progress = st.progress(
-        0.0, text=f"Checking the forecast for {len(candidates)} trail(s)…"
+        0.0,
+        text=t("Checking the forecast for {n} trail(s)…", n=len(candidates)),
     )
     done = 0
     with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
-        futures = {ex.submit(_score_trail, t, target_date, risk): t for t in candidates}
+        futures = {
+            ex.submit(_score_trail, trail, target_date, risk): trail
+            for trail in candidates
+        }
         for fut in as_completed(futures):
             results.append(fut.result())
             done += 1
             progress.progress(
                 done / len(candidates),
-                text=f"Scored {done}/{len(candidates)} trails…",
+                text=t("Scored {done}/{total} trails…",
+                       done=done, total=len(candidates)),
             )
     progress.empty()
     return results
@@ -288,7 +298,7 @@ def _score_all_parallel(candidates, target_date: date, risk: int) -> list[dict]:
 def render_results(results: list[dict], target_date: date) -> None:
     if not results:
         st.warning(
-            "No trails matched your quiz answers. Loosen the filters and try again."
+            t("No trails matched your quiz answers. Loosen the filters and try again.")
         )
         return
 
@@ -299,18 +309,24 @@ def render_results(results: list[dict], target_date: date) -> None:
         summary[r["adjusted"]] = summary.get(r["adjusted"], 0) + 1
 
     st.success(
-        f"Ranked **{len(results)}** matching trail(s) for "
-        f"**{target_date.strftime('%A %d %B %Y')}**. "
-        f"🟢 {summary['SAFE']} · 🟠 {summary['BORDERLINE']} · "
-        f"🔴 {summary['AVOID']} · ⚪ {summary['—']}"
+        t(
+            "Ranked **{n}** matching trail(s) for **{d}**. 🟢 {safe} · 🟠 "
+            "{borderline} · 🔴 {avoid} · ⚪ {nodata}",
+            n=len(results),
+            d=fmt_date(target_date, "full"),
+            safe=summary["SAFE"],
+            borderline=summary["BORDERLINE"],
+            avoid=summary["AVOID"],
+            nodata=summary["—"],
+        )
     )
     st.markdown(
         stat_pills_html(
             [
-                ("safe", summary["SAFE"]),
-                ("borderline", summary["BORDERLINE"]),
-                ("avoid", summary["AVOID"]),
-                ("no data", summary["—"]),
+                (t("safe"), summary["SAFE"]),
+                (t("borderline"), summary["BORDERLINE"]),
+                (t("avoid"), summary["AVOID"]),
+                (t("no data"), summary["—"]),
             ]
         ),
         unsafe_allow_html=True,
@@ -322,18 +338,19 @@ def render_results(results: list[dict], target_date: date) -> None:
     if failed:
         sample_errors = sorted({r["error"] for r in failed})[:3]
         with st.expander(
-            f"⚠️ {len(failed)} trail(s) couldn't be scored — show details",
+            t("⚠️ {n} trail(s) couldn't be scored — show details",
+              n=len(failed)),
             expanded=False,
         ):
             st.markdown(
-                "These trails appear in the list with **no data**. The most "
-                "common cause is a transient Open-Meteo API hiccup — usually "
-                "fixes itself; click **🔁 Re-run search** above to retry."
+                t("These trails appear in the list with **no data**. The most "
+                  "common cause is a transient Open-Meteo API hiccup — usually "
+                  "fixes itself; click **🔁 Re-run search** above to retry.")
             )
-            st.markdown("**Sample error message(s):**")
+            st.markdown(t("**Sample error message(s):**"))
             for e in sample_errors:
                 st.code(e)
-            st.markdown("**Affected trails:**")
+            st.markdown(t("**Affected trails:**"))
             st.write(
                 ", ".join(r["trail"]["name"] for r in failed[:30])
                 + ("…" if len(failed) > 30 else "")
@@ -341,9 +358,9 @@ def render_results(results: list[dict], target_date: date) -> None:
 
     st.markdown(
         section_heading(
-            f"Top {min(TOP_N, len(results))} hikes",
-            "Open any recommendation for the route map, weather breakdown, tricky parts, photos and reports.",
-            "Ranked recommendations",
+            t("Top {n} hikes", n=min(TOP_N, len(results))),
+            t("Open any recommendation for the route map, weather breakdown, tricky parts, photos and reports."),
+            t("Ranked recommendations"),
         ),
         unsafe_allow_html=True,
     )
@@ -358,7 +375,7 @@ def render_results(results: list[dict], target_date: date) -> None:
             _render_result_card(r, target_date, image_index=i)
 
     if len(results) > TOP_N:
-        with st.expander(f"Show the other {len(results) - TOP_N} matches"):
+        with st.expander(t("Show the other {n} matches", n=len(results) - TOP_N)):
             tail_cols = st.columns(3, gap="large")
             for i, r in enumerate(results[TOP_N:]):
                 with tail_cols[i % 3]:
@@ -484,14 +501,14 @@ def _render_result_card(
 
     pill = (
         f"<span class='verdict-pill {status_class(verdict)}'>"
-        f"{escape(emoji)} {escape(verdict)}"
+        f"{escape(emoji)} {escape(verdict_label(verdict))}"
         f"</span>"
     )
 
     caveat_html = ""
     if r.get("caveats"):
         caveat_html = (
-            f"<div class='safety-note'>⚠️ <b>Safety note:</b> "
+            f"<div class='safety-note'>⚠️ <b>{escape(t('Safety note'))}:</b> "
             f"{escape(r['caveats'][0])}</div>"
         )
 
@@ -521,15 +538,15 @@ def _render_result_card(
             <div class="hike-stats">
               <div>
                 <div class="hike-stat-value">{escape(time_est)}</div>
-                <div class="hike-stat-label">Time</div>
+                <div class="hike-stat-label">{escape(t("Time"))}</div>
               </div>
               <div>
                 <div class="hike-stat-value">{ascent} m</div>
-                <div class="hike-stat-label">Ascent</div>
+                <div class="hike-stat-label">{escape(t("Ascent"))}</div>
               </div>
               <div>
                 <div class="hike-stat-value">{trail['length_km']} km</div>
-                <div class="hike-stat-label">Length</div>
+                <div class="hike-stat-label">{escape(t("Length"))}</div>
               </div>
             </div>
             {caveat_html}
@@ -542,7 +559,7 @@ def _render_result_card(
     # session state, then jump to the Trail Detail page. Streamlit pages
     # share data through session state so we don't lose this when we switch.
     key = f"detail_{'tail_' if compact else ''}{trail['id']}"
-    if st.button("View details", key=key, width="stretch"):
+    if st.button(t("View details"), key=key, width="stretch"):
         st.session_state["selected_trail_id"] = trail["id"]
         st.session_state["selected_date"] = target_date
         st.switch_page("pages/Trail_Detail.py")
@@ -553,9 +570,9 @@ def render_recent_community_feed() -> None:
     st.divider()
     st.markdown(
         section_heading(
-            "Recent reports from hikers",
-            "Community reports become training signal the next time the model is retrained.",
-            "Trail notes",
+            t("Recent reports from hikers"),
+            t("Community reports become training signal the next time the model is retrained."),
+            t("Trail notes"),
         ),
         unsafe_allow_html=True,
     )
@@ -564,18 +581,19 @@ def render_recent_community_feed() -> None:
     rows = db_manager.get_recent_user_reports(limit=6)
     if not rows:
         st.caption(
-            "No reports yet. Open any trail's detail page and submit one "
-            "after your hike — they go straight into the model on the next retrain."
+            t("No reports yet. Open any trail's detail page and submit one "
+              "after your hike — they go straight into the model on the next retrain.")
         )
         return
     cols = st.columns(min(3, len(rows)))
     for col, r in zip(cols, rows):
         emoji = VERDICT_EMOJI.get(r["user_label"], "⚪")
-        comment = (r["comment"] or "").strip() or "_no comment_"
+        comment = (r["comment"] or "").strip() or t("_no comment_")
         with col:
             with st.container(border=True):
                 st.markdown(
-                    f"{emoji} **{r['trail_name']}** — {r['user_label']}  \n"
+                    f"{emoji} **{r['trail_name']}** — "
+                    f"{verdict_label(r['user_label'])}  \n"
                     f"_{r['report_date']}_  \n{comment}"
                 )
 
@@ -601,9 +619,9 @@ def main() -> None:
 
     st.markdown(
         page_hero(
-            "Find my best hike",
-            "Tell us what kind of day you want and when. We cross-reference your preferences with the live weather forecast and rank matching hikes safest first.",
-            "AI trail finder",
+            t("Find my best hike"),
+            t("Tell us what kind of day you want and when. We cross-reference your preferences with the live weather forecast and rank matching hikes safest first."),
+            t("AI trail finder"),
         ),
         unsafe_allow_html=True,
     )
@@ -612,7 +630,7 @@ def main() -> None:
     # SQL roll-up so the widgets always match what's actually in the DB.
     meta = db_manager.get_trail_metadata()
     if not meta["cantons"]:
-        st.error("No trails seeded. Restart the app or run bootstrap.")
+        st.error(t("No trails seeded. Restart the app or run bootstrap."))
         return
 
     # 1) Show the quiz. ``submitted_answers`` is only set on the run right
@@ -630,8 +648,8 @@ def main() -> None:
     answers = st.session_state.get("find_answers")
     if answers is None:
         st.info(
-            "👆 Fill in the filters and hit **Find matching hikes** to see your "
-            "ranked recommendations."
+            t("👆 Fill in the filters and hit **Find matching hikes** to see your "
+              "ranked recommendations.")
         )
         render_recent_community_feed()
         return
@@ -639,7 +657,7 @@ def main() -> None:
     # 2) "Reset" control so the user can start over.
     bar = st.columns([1, 5])
     with bar[0]:
-        if st.button("✖ Clear & restart", use_container_width=True):
+        if st.button(t("✖ Clear & restart"), use_container_width=True):
             st.session_state.pop("find_answers", None)
             st.session_state.pop("find_results", None)
             st.session_state.pop("find_answers_sig", None)
@@ -671,8 +689,8 @@ def main() -> None:
         )
         if not candidates:
             st.warning(
-                "No trails match your quiz answers. Try widening the canton, "
-                "difficulty, or length filters."
+                t("No trails match your quiz answers. Try widening the canton, "
+                  "difficulty, or length filters.")
             )
             return
 

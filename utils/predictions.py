@@ -25,6 +25,7 @@ import streamlit as st
 from data import db_manager, label_engine, weather_fetcher
 from ml import trail_classifier
 from utils.constants import VERDICT_COLOURS
+from utils.i18n import t
 
 
 # We line up the three verdicts on a 0/1/2 scale. SAFE is the calmest end,
@@ -181,11 +182,12 @@ def apply_difficulty_floor(
     if difficulty in HARD_GRADES and final == "SAFE":
         final = "BORDERLINE"
         caveats.append(
-            f"This is a {difficulty} ({DIFFICULTY_NAMES[difficulty]}). "
-            "Even with perfect weather, the terrain itself carries serious "
-            "risk — a slip on exposed ground can be lethal. We never mark "
-            "T4–T6 routes as SAFE; treat the conditions as a green light "
-            "for the *weather*, not for the *route*."
+            t("This is a {grade} ({name}). Even with perfect weather, the "
+              "terrain itself carries serious risk — a slip on exposed "
+              "ground can be lethal. We never mark T4–T6 routes as SAFE; "
+              "treat the conditions as a green light for the *weather*, "
+              "not for the *route*.",
+              grade=difficulty, name=t(DIFFICULTY_NAMES[difficulty]))
         )
 
     # Rule 2: on T5 and T6, any meaningful weather concern pushes the
@@ -198,29 +200,35 @@ def apply_difficulty_floor(
         max_alt = trail["max_alt_m"]
         concerns: list[str] = []
         if wind >= 30:
-            concerns.append(f"wind {wind:.0f} km/h on exposed climbing terrain")
+            concerns.append(
+                t("wind {wind} km/h on exposed climbing terrain",
+                  wind=f"{wind:.0f}")
+            )
         if precip >= 2:
             concerns.append(
-                f"precipitation {precip:.1f} mm — wet rock above 2500 m turns "
-                "scrambling deadly"
+                t("precipitation {precip} mm — wet rock above 2500 m turns "
+                  "scrambling deadly", precip=f"{precip:.1f}")
             )
         if snowline is not None and snowline < max_alt + 200:
             concerns.append(
-                f"snowline {int(snowline)} m within 200 m of the summit "
-                f"({max_alt} m) — verglas and hidden ice likely"
+                t("snowline {snowline} m within 200 m of the summit "
+                  "({max} m) — verglas and hidden ice likely",
+                  snowline=int(snowline), max=max_alt)
             )
         if concerns and final != "AVOID":
             final = "AVOID"
             caveats.append(
-                f"On a {difficulty} route, any of these is a stop sign: "
-                + "; ".join(concerns) + "."
+                t("On a {grade} route, any of these is a stop sign: "
+                  "{concerns}.",
+                  grade=difficulty, concerns="; ".join(concerns))
             )
 
     if difficulty == "T3" and final == "SAFE":
         caveats.append(
-            "T3 demands surefootedness on steep, partly exposed terrain. "
-            "A fall here can mean a serious injury. Hiking poles and proper "
-            "boots are non-negotiable; turn back if you feel unsteady."
+            t("T3 demands surefootedness on steep, partly exposed terrain. "
+              "A fall here can mean a serious injury. Hiking poles and "
+              "proper boots are non-negotiable; turn back if you feel "
+              "unsteady.")
         )
 
     return final, caveats
